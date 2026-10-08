@@ -1,10 +1,9 @@
 [tool]
-id = "com.thelightphone.app"
-label = "Light SDK Tool"
+id = "io.github.jabberbox.bubblelight"
+label = "Bubble Light"
 versionCode = 1
 versionName = "1.0.0"
 permissions = ["android.permission.INTERNET"]
-capabilities = []
-# change if you run this on an LP3!
-# serverPackage = "com.lightos"
-serverPackage = "com.thelightphone.sdk.emulator"
+# Self-hosted BlueBubbles servers are often plain http on the home network.
+capabilities = ["cleartext-http"]
+serverPackage = "com.lightos"
