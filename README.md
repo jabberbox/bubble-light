@@ -56,8 +56,10 @@ The screenshots use made-up contacts from the fake server in `tools/`.
 ## Privacy
 
 Everything stays between the phone and your server. There is no analytics, no tracking and no advertising.
-The tool asks for only the internet permission and the `cleartext-http` capability, which lets it reach a
-server on your home network over plain HTTP. Use HTTPS or a VPN when the server is reachable from outside.
+`tool/lighttool.toml` declares only the internet permission and the `cleartext-http` capability, which lets the
+tool reach a server on your home network over plain HTTP. The SDK's own libraries add a few more permissions
+to every tool's manifest; this tool does not use them. Use HTTPS or a VPN when the server is reachable from
+outside your home network.
 
 ## Why BlueBubbles and not OpenBubbles
 
