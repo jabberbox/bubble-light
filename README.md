@@ -51,6 +51,9 @@ Some tunnels, such as a free Cloudflare quick tunnel, give the server a new addr
 official BlueBubbles apps learn the new address through Firebase, which this tool cannot. When that happens,
 open Settings, choose **Change server** and scan the QR code again, or pick an address that stays the same.
 
+**Resync** in Settings throws away the copy of your chats kept on the phone and downloads it again from the
+same server. Your sign-in stays. Use it if what the phone shows ever looks different from what the server holds.
+
 **Change server** checks the new details first, so a wrong one changes nothing. If the server reports the same
 Apple account as before, your chats stay as they are. If it reports a different account, or none, the chats
 cached on the phone are cleared and downloaded again from the new server.

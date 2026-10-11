@@ -183,6 +183,7 @@ class ChatRepository(
             try {
                 val page = withContext(Dispatchers.IO) { api.chatMessages(guid, PAGE) }
                 storeHistory(guid, page)
+                log("thread opened: fetched ${page.size}, ${db.messages().count(guid)} stored, history complete: ${page.size < PAGE}")
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -191,8 +192,12 @@ class ChatRepository(
         }
     }
 
+    /** What a call to [loadOlder] left behind: more to fetch, nothing more, or a failure worth retrying. */
+    enum class Older { More, Done, Failed }
+
     /** Fetches the next page of history before the oldest message stored, for each room not yet exhausted. */
-    suspend fun loadOlder(guids: List<String>) {
+    suspend fun loadOlder(guids: List<String>): Older {
+        var more = false
         for (guid in guids) {
             try {
                 val chat = db.chats().get(guid) ?: continue
@@ -200,12 +205,17 @@ class ChatRepository(
                 val before = db.messages().oldest(guid) ?: continue
                 val page = withContext(Dispatchers.IO) { api.chatMessages(guid, PAGE, before) }
                 storeHistory(guid, page)
+                val done = page.size < PAGE
+                if (!done) more = true
+                log("older history: fetched ${page.size}, ${db.messages().count(guid)} stored, history complete: $done")
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 log("history failed: ${e::class.simpleName}")
+                return Older.Failed
             }
         }
+        return if (more) Older.More else Older.Done
     }
 
     private suspend fun storeHistory(guid: String, page: List<MessageEntity>) {

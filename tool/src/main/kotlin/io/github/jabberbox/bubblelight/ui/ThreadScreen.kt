@@ -1,5 +1,6 @@
 package io.github.jabberbox.bubblelight.ui
 
+import android.util.Log
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -32,6 +33,7 @@ import com.thelightphone.sdk.ui.LightTopBarCenter
 import com.thelightphone.sdk.ui.gridUnitsAsDp
 import com.thelightphone.sdk.ui.lightClickable
 import io.github.jabberbox.bubblelight.BubbleGraph
+import io.github.jabberbox.bubblelight.data.ChatRepository
 import io.github.jabberbox.bubblelight.data.Contacts
 import io.github.jabberbox.bubblelight.data.MessageEntity
 import io.github.jabberbox.bubblelight.data.MessageState
@@ -44,6 +46,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
@@ -133,14 +136,32 @@ class ThreadViewModel(private val graph: BubbleGraph, private val chatGuid: Stri
         readJob?.cancel()
     }
 
+    /**
+     * Bumped each time a load of older history finishes without failing. The screen watches it, so that if the oldest
+     * message is still in view after a load (a page made mostly of tapbacks adds few rows) it asks again, instead of
+     * waiting for the next scroll.
+     */
+    private val _loadTick = MutableStateFlow(0)
+    val loadTick: StateFlow<Int> = _loadTick.asStateFlow()
+
+    private var moreHistory = true
+
     /** Shows more of what is stored, and asks the server for more once the store runs out. */
     fun loadOlder() {
-        if (loadingOlder) return
+        if (loadingOlder || !moreHistory) return
         loadingOlder = true
+        Log.i("BubbleLight", "older history requested")
         limit.update { it + PAGE }
         viewModelScope.launch {
             try {
-                repo.loadOlder(guids.value)
+                when (repo.loadOlder(guids.value)) {
+                    ChatRepository.Older.More -> _loadTick.update { it + 1 }
+                    ChatRepository.Older.Done -> {
+                        moreHistory = false
+                        _loadTick.update { it + 1 }
+                    }
+                    ChatRepository.Older.Failed -> Unit
+                }
             } finally {
                 loadingOlder = false
             }
@@ -178,10 +199,11 @@ class ThreadScreen(
         val title by viewModel.title.collectAsState()
         val messages by viewModel.messages.collectAsState()
         val callNumber by viewModel.callNumber.collectAsState()
+        val loadTick by viewModel.loadTick.collectAsState()
         val listState = rememberLazyListState()
 
-        // Ask for more history when the oldest loaded message comes into view.
-        LaunchedEffect(messages.size) {
+        // Ask for more history when the oldest loaded message comes into view, and again after each load if it still is.
+        LaunchedEffect(messages.size, loadTick) {
             snapshotFlow { listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1 }
                 .filter { it >= 0 && it >= messages.size - 3 }
                 .distinctUntilChanged()

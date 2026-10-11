@@ -81,6 +81,20 @@ class SettingsViewModel(private val graph: BubbleGraph) : LightViewModel<Unit>()
         }
     }
 
+    /** Wipes the local copy and downloads every chat again. The sign-in is kept. */
+    fun resync() {
+        _status.value = "Resyncing. Your chats will fill back in over the next minute."
+        viewModelScope.launch {
+            try {
+                graph.resync()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _status.value = "Could not resync (${e::class.simpleName})."
+            }
+        }
+    }
+
     /** The first tap asks for confirmation, the second signs out and forgets everything stored from the server. */
     fun signOut(done: () -> Unit) {
         if (!_confirmSignOut.value) {
@@ -141,6 +155,14 @@ class SettingsScreen(sealedActivity: SealedLightActivity) : BubbleScreen<Unit, S
                     modifier = Modifier
                         .fillMaxWidth()
                         .lightClickable(onClick = ::changeServer)
+                        .padding(vertical = 0.75f.gridUnitsAsDp()),
+                )
+                LightText(
+                    text = "Resync",
+                    variant = LightTextVariant.Copy,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .lightClickable { viewModel.resync() }
                         .padding(vertical = 0.75f.gridUnitsAsDp()),
                 )
                 LightText(

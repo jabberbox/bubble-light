@@ -148,6 +148,21 @@ class BubbleGraph private constructor(private val lightContext: SealedLightConte
         buildSession()
     }
 
+    /**
+     * Throws away the local copy of every chat and downloads it again from the same server, keeping the sign-in.
+     * For when what the phone shows has drifted from what the server holds.
+     */
+    suspend fun resync() {
+        _session.value?.live?.stop()
+        _session.value = null
+        withContext(Dispatchers.IO) {
+            mediaCache.clear()
+            db.clearAllTables()
+        }
+        store.resetSyncState()
+        buildSession()
+    }
+
     /** Forgets the server and everything cached from it. */
     suspend fun signOut() {
         _session.value?.live?.stop()

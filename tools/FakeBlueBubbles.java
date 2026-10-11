@@ -88,6 +88,25 @@ public class FakeBlueBubbles {
         add(jordan, "Can you send me the address?", 5, false, "+15550100003", true, "");
         add(stranger, "Your package has been delivered", 4000, false, "+15550100009", false, "");
 
+        // A long thread for testing history paging: 230 rows, two minutes apart, row 0 the oldest and row 229 the newest.
+        // Rows 60 to 179 are all tapbacks, which the app folds away, so whole pages of history add nothing visible.
+        Chat longChat = new Chat("iMessage;-;+15550100012", "", false, List.of("+15550100012"));
+        contacts.put("+15550100012", "Riley Long");
+        long longBase = 60 * 24 * 3;
+        String hearted = "";
+        for (int i = 0; i < 230; i++) {
+            boolean tapback = i >= 60 && i <= 179;
+            boolean mine = i % 3 == 0;
+            String sender = mine ? null : "+15550100012";
+            if (tapback) {
+                add(longChat, "Loved a message", longBase - 2L * i, false, "+15550100012", false,
+                    ",\"associatedMessageGuid\":\"p:0/" + hearted + "\",\"associatedMessageType\":\"love\"");
+            } else {
+                add(longChat, "Long thread message " + i, longBase - 2L * i, mine, sender, false, "");
+                if (i == 59) hearted = "MSG-" + counter;
+            }
+        }
+
         // Old, quiet chats. With a small sweep cap (see /admin/sweepcap) they sit outside the newest messages, the way
         // quiet chats do on a real server. The dentist's message was never read.
         Chat oldFriend = new Chat("iMessage;-;+15550100010", "", false, List.of("+15550100010"));
