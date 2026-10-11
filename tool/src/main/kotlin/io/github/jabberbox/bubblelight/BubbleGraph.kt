@@ -120,6 +120,31 @@ class BubbleGraph private constructor(private val lightContext: SealedLightConte
         val info = withContext(Dispatchers.IO) { BlueBubblesApi(url, password).serverInfo() }
         store.saveServer(url, password)
         store.updatePrivateApi(info.privateApiReady)
+        store.updateServerAccount(info.account)
+        buildSession()
+    }
+
+    /**
+     * Points an already signed-in tool at a different address or password. The new details are checked first, so a
+     * wrong one changes nothing. When the server reports the same Apple account as before it is the same server
+     * under a new address, and the chats stay; otherwise everything cached from the old server is dropped. A server
+     * that does not report an account counts as different, since keeping another server's chats would be worse.
+     */
+    suspend fun changeServer(url: String, password: String) {
+        val info = withContext(Dispatchers.IO) { BlueBubblesApi(url, password).serverInfo() }
+        val sameServer = info.account != null && info.account == store.serverAccount
+        _session.value?.live?.stop()
+        if (!sameServer) {
+            _session.value = null
+            withContext(Dispatchers.IO) {
+                mediaCache.clear()
+                db.clearAllTables()
+            }
+            store.resetSyncState()
+        }
+        store.saveServer(url, password)
+        store.updatePrivateApi(info.privateApiReady)
+        store.updateServerAccount(info.account)
         buildSession()
     }
 

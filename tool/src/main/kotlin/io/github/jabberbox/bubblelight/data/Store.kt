@@ -41,6 +41,11 @@ class Store(private val dataStore: DataStore<Preferences>, private val scope: Co
     var lastContactsSync: Long = 0L
         private set
 
+    /** The Apple account the server was signed in to when this phone connected, or null when the server did not say. */
+    @Volatile
+    var serverAccount: String? = null
+        private set
+
     val password: String?
         get() = encryptedPassword?.let { runCatching { SecureStore.decrypt(it) }.getOrNull() }
 
@@ -54,6 +59,7 @@ class Store(private val dataStore: DataStore<Preferences>, private val scope: Co
         privateApi = prefs[KEY_PRIVATE_API] ?: false
         sendReadReceipts = prefs[KEY_READ_RECEIPTS] ?: false
         lastContactsSync = prefs[KEY_CONTACTS_SYNC] ?: 0L
+        serverAccount = prefs[KEY_ACCOUNT]
     }
 
     fun saveServer(url: String, password: String) {
@@ -87,6 +93,21 @@ class Store(private val dataStore: DataStore<Preferences>, private val scope: Co
         persist { it[KEY_CONTACTS_SYNC] = value }
     }
 
+    fun updateServerAccount(value: String?) {
+        serverAccount = value
+        persist { if (value == null) it.remove(KEY_ACCOUNT) else it[KEY_ACCOUNT] = value }
+    }
+
+    /** Forgets how far this phone has synced, so the next sync starts from the server's newest messages again. */
+    fun resetSyncState() {
+        lastSeenDate = 0L
+        lastContactsSync = 0L
+        persist {
+            it.remove(KEY_LAST_SEEN)
+            it.remove(KEY_CONTACTS_SYNC)
+        }
+    }
+
     suspend fun clear() {
         baseUrl = null
         encryptedPassword = null
@@ -94,9 +115,10 @@ class Store(private val dataStore: DataStore<Preferences>, private val scope: Co
         privateApi = false
         sendReadReceipts = false
         lastContactsSync = 0L
+        serverAccount = null
         // The SDK keeps its own keys in this same DataStore, so only this tool's keys are removed.
         dataStore.edit { prefs ->
-            listOf(KEY_URL, KEY_PASSWORD).forEach { prefs.remove(it) }
+            listOf(KEY_URL, KEY_PASSWORD, KEY_ACCOUNT).forEach { prefs.remove(it) }
             listOf(KEY_LAST_SEEN, KEY_CONTACTS_SYNC).forEach { prefs.remove(it) }
             listOf(KEY_PRIVATE_API, KEY_READ_RECEIPTS).forEach { prefs.remove(it) }
         }
@@ -113,14 +135,33 @@ class Store(private val dataStore: DataStore<Preferences>, private val scope: Co
         private val KEY_PRIVATE_API = booleanPreferencesKey("bb_private_api")
         private val KEY_READ_RECEIPTS = booleanPreferencesKey("bb_read_receipts")
         private val KEY_CONTACTS_SYNC = longPreferencesKey("bb_contacts_sync")
+        private val KEY_ACCOUNT = stringPreferencesKey("bb_server_account")
 
-        /** Turns what was typed into a server URL: https unless another scheme is given, no trailing slash. Null if unusable. */
+        /**
+         * Turns what was typed or scanned into a server URL, with no trailing slash. A scheme that was given is kept.
+         * Without one, an address on the home network (a private IP, `.local` or `localhost`) gets http, since such a
+         * server has no certificate, and anything else gets https. Null if unusable.
+         */
         fun normalizeUrl(input: String): String? {
             var url = input.trim().trimEnd('/')
             if (url.isEmpty() || url.any { it.isWhitespace() }) return null
-            if (!url.startsWith("http://") && !url.startsWith("https://")) url = "https://$url"
+            val hasScheme = url.startsWith("http://", ignoreCase = true) || url.startsWith("https://", ignoreCase = true)
+            if (hasScheme) {
+                url = url.substringBefore("://").lowercase() + "://" + url.substringAfter("://")
+            } else {
+                val bareHost = url.substringBefore('/').substringBefore(':')
+                url = (if (isHomeNetworkHost(bareHost)) "http://" else "https://") + url
+            }
             val host = url.substringAfter("://").substringBefore('/').substringBefore(':')
             return if (host.isEmpty() || !host.contains('.') && host != "localhost") null else url
+        }
+
+        private fun isHomeNetworkHost(host: String): Boolean {
+            val h = host.lowercase()
+            if (h == "localhost" || h.endsWith(".local")) return true
+            val parts = h.split('.').map { it.toIntOrNull() ?: return false }
+            if (parts.size != 4 || parts.any { it !in 0..255 }) return false
+            return parts[0] == 10 || parts[0] == 127 || (parts[0] == 192 && parts[1] == 168) || (parts[0] == 172 && parts[1] in 16..31)
         }
     }
 }

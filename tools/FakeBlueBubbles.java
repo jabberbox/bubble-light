@@ -19,7 +19,9 @@ import javax.imageio.ImageIO;
  * A stand-in BlueBubbles server with made-up conversations, for trying the app without a real Mac or any
  * real messages. Run with: java tools/FakeBlueBubbles.java [port] [password]
  * From the Android emulator the host is http://10.0.2.2:PORT (debug builds allow plain HTTP for this).
- * Port PORT speaks both plain HTTP and a Socket.IO v4 WebSocket feed (a front door hands upgrades to the feed and\n * pipes everything else to an internal HTTP server on PORT+1).\n * Admin routes (all need the password): /admin/incoming?text=..&from=..  /admin/read?chat=..  /admin/drop  /admin/mute
+ * Port PORT speaks both plain HTTP and a Socket.IO v4 WebSocket feed (a front door hands upgrades to the feed and
+ * pipes everything else to an internal HTTP server on PORT+1).
+ * Admin routes (all need the password): /admin/incoming?text=..&from=..  /admin/read?chat=..  /admin/drop  /admin/mute  /admin/account?name=..
  */
 public class FakeBlueBubbles {
     record Chat(String guid, String name, boolean group, List<String> people) {}
@@ -170,7 +172,7 @@ public class FakeBlueBubbles {
         if (path.startsWith("/admin/")) {
             admin(ex, path, q);
         } else if (path.equals("/api/v1/server/info")) {
-            json(ex, 200, "{\"status\":200,\"data\":{\"server_version\":\"fake\",\"private_api\":false,\"helper_connected\":false}}");
+            json(ex, 200, "{\"status\":200,\"data\":{\"server_version\":\"fake\",\"private_api\":false,\"helper_connected\":false,\"detected_icloud\":" + q(account) + "}}");
         } else if (path.equals("/api/v1/message/query")) {
             long after = num(body, "after", 0);
             int limit = (int) num(body, "limit", 100);
@@ -265,6 +267,7 @@ public class FakeBlueBubbles {
 
     static final List<WsClient> clients = new ArrayList<>();
     static volatile boolean muted = false;
+    static volatile String account = "fake@icloud.com";
 
     static class WsClient {
         final java.net.Socket socket;
@@ -438,6 +441,9 @@ public class FakeBlueBubbles {
             List<WsClient> snapshot;
             synchronized (clients) { snapshot = new ArrayList<>(clients); }
             for (WsClient c : snapshot) c.socket.close();
+            json(ex, 200, "{\"status\":200}");
+        } else if (path.equals("/admin/account")) {
+            account = q.getOrDefault("name", account);
             json(ex, 200, "{\"status\":200}");
         } else if (path.equals("/admin/mute")) {
             muted = !muted;

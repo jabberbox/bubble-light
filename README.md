@@ -20,15 +20,40 @@ The screenshots use made-up contacts from the fake server in `tools/`.
 
 - A Mac that stays on, signed in to Messages, running a BlueBubbles server. Setup is covered in the
   [BlueBubbles docs](https://docs.bluebubbles.app).
-- A way for the phone to reach that server: the same Wi-Fi network, or a VPN such as Tailscale.
-- The server address and its password.
+- An address the phone can reach that server at. See [Reaching your server](#reaching-your-server).
+- The server's setup QR code, or its address and password.
 
 ## Setup
 
 1. Open Bubble Light and tap SET UP.
-2. Type the server address, for example `https://my-mac.example.net` or `http://192.168.1.20:1234`.
-3. Type the server password. Both are stored on the phone only. The password is encrypted with a key held in
-   the Android Keystore.
+2. Choose **Scan QR code** and point the camera at the setup QR code your BlueBubbles server shows. Or choose
+   **Type address and password** and enter them with the Light keyboard.
+3. That is all. The address and password are stored on the phone only, and the password is encrypted with a key
+   held in the Android Keystore.
+
+Scanning reads the password and the server address from the code and ignores everything else in it.
+
+## Reaching your server
+
+The tool only needs a web address it can open, and nothing has to be installed on the phone besides the tool.
+
+- **A public HTTPS address** is the easiest for most people. BlueBubbles can set up a tunnel for you (a Cloudflare
+  or ngrok tunnel, among others, see its docs), or you can use dynamic DNS with a forwarded port. Tailscale
+  Funnel also publishes the Mac's server at a public address.
+- **Your home Wi-Fi** works with the server's local address, for example `192.168.1.20:1234`. An address on the
+  home network defaults to plain `http`, since such a server has no certificate.
+- **A private network such as a Tailscale tailnet** works too, if you would rather not expose the server. The
+  phone then needs that network's app running.
+
+Anyone who finds a public address can try the password, so use a long one and HTTPS only.
+
+Some tunnels, such as a free Cloudflare quick tunnel, give the server a new address every time it restarts. The
+official BlueBubbles apps learn the new address through Firebase, which this tool cannot. When that happens,
+open Settings, choose **Change server** and scan the QR code again, or pick an address that stays the same.
+
+**Change server** checks the new details first, so a wrong one changes nothing. If the server reports the same
+Apple account as before, your chats stay as they are. If it reports a different account, or none, the chats
+cached on the phone are cleared and downloaded again from the new server.
 
 ## What works
 
@@ -41,6 +66,7 @@ The screenshots use made-up contacts from the fake server in `tools/`.
 - Calling a contact: the call button hands the number to LightOS's dialer.
 - Live updates while the tool is open.
 - Optional read receipts, when the server's Private API is available.
+- Setup by scanning the server's QR code, and a Change server option for when its address changes.
 
 ## What it does not do, and why
 
@@ -56,10 +82,11 @@ The screenshots use made-up contacts from the fake server in `tools/`.
 ## Privacy
 
 Everything stays between the phone and your server. There is no analytics, no tracking and no advertising.
-`tool/lighttool.toml` declares only the internet permission and the `cleartext-http` capability, which lets the
-tool reach a server on your home network over plain HTTP. The SDK's own libraries add a few more permissions
-to every tool's manifest; this tool does not use them. Use HTTPS or a VPN when the server is reachable from
-outside your home network.
+`tool/lighttool.toml` declares the internet permission, the camera permission and the `cleartext-http`
+capability. The camera is used only to scan the server's setup QR code, and no image is stored or sent. The
+capability lets the tool reach a server on your home network over plain HTTP. The SDK's own libraries add a few
+more permissions to every tool's manifest; this tool does not use them. Use HTTPS whenever the server is
+reachable from outside your home network.
 
 ## Why BlueBubbles and not OpenBubbles
 
@@ -92,6 +119,8 @@ From the Android emulator the host is `http://10.0.2.2:8099` and the password is
 
 - `/admin/incoming?password=fake&text=hello&from=%2B15550100001` pushes a new message over the socket.
 - `/admin/drop` closes every socket and `/admin/mute` stops the heartbeat, to exercise reconnecting.
+- `/admin/account?password=fake&name=someone%40icloud.com` changes the Apple account the server reports, to
+  exercise Change server.
 
 To run in the LightOS emulator, set `serverPackage = "com.thelightphone.sdk.emulator"` in
 `tool/lighttool.toml` and build with `-DlightSdk.allowAltServerPackage=true`, then set the emulator's client

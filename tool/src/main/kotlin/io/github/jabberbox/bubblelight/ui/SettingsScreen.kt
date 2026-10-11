@@ -22,16 +22,22 @@ import com.thelightphone.sdk.ui.LightTopBarCenter
 import com.thelightphone.sdk.ui.gridUnitsAsDp
 import com.thelightphone.sdk.ui.lightClickable
 import io.github.jabberbox.bubblelight.BubbleGraph
+import io.github.jabberbox.bubblelight.api.ApiException
+import io.github.jabberbox.bubblelight.data.ServerSetup
+import java.io.IOException
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
 class SettingsViewModel(private val graph: BubbleGraph) : LightViewModel<Unit>() {
-    /** Read receipts need the server's Private API, which a Mac with System Integrity Protection on does not have. */
-    val receiptsAvailable: Boolean = graph.store.privateApi
+    private val _server = MutableStateFlow(host())
+    val server: StateFlow<String> = _server.asStateFlow()
 
-    val server: String = graph.store.baseUrl?.substringAfter("://")?.substringBefore('/').orEmpty()
+    /** Read receipts need the server's Private API, which a Mac with System Integrity Protection on does not have. */
+    private val _receiptsAvailable = MutableStateFlow(graph.store.privateApi)
+    val receiptsAvailable: StateFlow<Boolean> = _receiptsAvailable.asStateFlow()
 
     private val _receipts = MutableStateFlow(graph.store.sendReadReceipts)
     val receipts: StateFlow<Boolean> = _receipts.asStateFlow()
@@ -39,11 +45,40 @@ class SettingsViewModel(private val graph: BubbleGraph) : LightViewModel<Unit>()
     private val _confirmSignOut = MutableStateFlow(false)
     val confirmSignOut: StateFlow<Boolean> = _confirmSignOut.asStateFlow()
 
+    private val _status = MutableStateFlow<String?>(null)
+
+    /** What the last Change server attempt did, shown under the server line. */
+    val status: StateFlow<String?> = _status.asStateFlow()
+
+    private fun host(): String = graph.store.baseUrl?.substringAfter("://")?.substringBefore('/').orEmpty()
+
     fun toggleReceipts() {
-        if (!receiptsAvailable) return
+        if (!_receiptsAvailable.value) return
         val on = !_receipts.value
         graph.store.updateSendReadReceipts(on)
         _receipts.value = on
+    }
+
+    /** Connects to the new server. A failed attempt leaves the current connection exactly as it was. */
+    fun changeServer(setup: ServerSetup) {
+        _status.value = "Connecting..."
+        viewModelScope.launch {
+            try {
+                graph.changeServer(setup.url, setup.password)
+                _server.value = host()
+                _receiptsAvailable.value = graph.store.privateApi
+                _receipts.value = graph.store.sendReadReceipts
+                _status.value = "Connected."
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: ApiException) {
+                _status.value = if (e.isAuthError) "That password was not accepted. Nothing was changed." else "The server answered with an error (${e.code}). Nothing was changed."
+            } catch (e: IOException) {
+                _status.value = "Could not reach that server. Nothing was changed."
+            } catch (e: Exception) {
+                _status.value = "Something went wrong (${e::class.simpleName}). Nothing was changed."
+            }
+        }
     }
 
     /** The first tap asks for confirmation, the second signs out and forgets everything stored from the server. */
@@ -68,7 +103,10 @@ class SettingsScreen(sealedActivity: SealedLightActivity) : BubbleScreen<Unit, S
     @Composable
     override fun Body() {
         val receipts by viewModel.receipts.collectAsState()
+        val receiptsAvailable by viewModel.receiptsAvailable.collectAsState()
         val confirm by viewModel.confirmSignOut.collectAsState()
+        val server by viewModel.server.collectAsState()
+        val status by viewModel.status.collectAsState()
         BubbleTheme {
             LightTopBar(
                 leftButton = LightBarButton.LightIcon(icon = LightIcons.BACK, onClick = { goBack() }),
@@ -79,13 +117,13 @@ class SettingsScreen(sealedActivity: SealedLightActivity) : BubbleScreen<Unit, S
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .lightClickable(enabled = viewModel.receiptsAvailable) { viewModel.toggleReceipts() }
+                        .lightClickable(enabled = receiptsAvailable) { viewModel.toggleReceipts() }
                         .padding(vertical = 0.75f.gridUnitsAsDp()),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Column(Modifier.weight(1f)) {
-                        LightText(text = "Read receipts", variant = LightTextVariant.Copy, lighten = !viewModel.receiptsAvailable)
-                        if (!viewModel.receiptsAvailable) {
+                        LightText(text = "Read receipts", variant = LightTextVariant.Copy, lighten = !receiptsAvailable)
+                        if (!receiptsAvailable) {
                             LightText(
                                 text = "Needs the server's Private API",
                                 variant = LightTextVariant.Fine,
@@ -93,10 +131,18 @@ class SettingsScreen(sealedActivity: SealedLightActivity) : BubbleScreen<Unit, S
                             )
                         }
                     }
-                    if (viewModel.receiptsAvailable) {
+                    if (receiptsAvailable) {
                         LightIcon(icon = if (receipts) LightIcons.TOGGLE_STATE_ON else LightIcons.TOGGLE_STATE_OFF, size = 1.5f)
                     }
                 }
+                LightText(
+                    text = "Change server",
+                    variant = LightTextVariant.Copy,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .lightClickable(onClick = ::changeServer)
+                        .padding(vertical = 0.75f.gridUnitsAsDp()),
+                )
                 LightText(
                     text = if (confirm) "Tap again to sign out" else "Sign out",
                     variant = LightTextVariant.Copy,
@@ -106,11 +152,18 @@ class SettingsScreen(sealedActivity: SealedLightActivity) : BubbleScreen<Unit, S
                         .padding(vertical = 0.75f.gridUnitsAsDp()),
                 )
                 LightText(
-                    text = "Server: ${viewModel.server}",
+                    text = "Server: $server",
                     variant = LightTextVariant.Fine,
                     lighten = true,
                     modifier = Modifier.padding(top = 1f.gridUnitsAsDp()),
                 )
+                status?.let {
+                    LightText(
+                        text = it,
+                        variant = LightTextVariant.Fine,
+                        modifier = Modifier.padding(top = 0.25f.gridUnitsAsDp()),
+                    )
+                }
                 LightText(
                     text = "Messages travel only between this phone and your own server. Ones that arrive while this tool is closed show up when you open it.",
                     variant = LightTextVariant.Fine,
@@ -119,5 +172,9 @@ class SettingsScreen(sealedActivity: SealedLightActivity) : BubbleScreen<Unit, S
                 )
             }
         }
+    }
+
+    private fun changeServer() {
+        navigateTo({ SetupScreen(it, title = "Change server") }) { setup -> viewModel.changeServer(setup) }
     }
 }

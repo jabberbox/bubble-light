@@ -1,9 +1,10 @@
 [tool]
 id = "io.github.jabberbox.bubblelight"
 label = "Bubble Light"
-versionCode = 1
-versionName = "1.0.0"
-permissions = ["android.permission.INTERNET"]
+versionCode = 2
+versionName = "1.1.0"
+# The camera is used only to scan the server's setup QR code.
+permissions = ["android.permission.INTERNET", "android.permission.CAMERA"]
 # Self-hosted BlueBubbles servers are often plain http on the home network.
 capabilities = ["cleartext-http"]
 serverPackage = "com.lightos"

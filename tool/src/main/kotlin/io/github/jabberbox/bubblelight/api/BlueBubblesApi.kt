@@ -30,6 +30,7 @@ class BlueBubblesApi(baseUrl: String, private val password: String) {
         return ServerInfo(
             privateApiReady = data?.optBoolean("private_api", false) == true && data.optBoolean("helper_connected", false),
             serverVersion = data?.optString("server_version")?.takeIf { it.isNotBlank() },
+            account = data?.takeIf { !it.isNull("detected_icloud") }?.optString("detected_icloud")?.takeIf { it.isNotBlank() },
         )
     }
 

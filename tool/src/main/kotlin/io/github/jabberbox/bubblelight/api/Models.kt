@@ -13,8 +13,11 @@ data class ChatInfo(
 /** A message as the server sent it, with the chat it belongs to when the payload carried one. */
 data class ParsedMessage(val message: MessageEntity, val chat: ChatInfo?)
 
-/** What `GET /server/info` says. [privateApiReady] means tapbacks, read receipts and typing are available. */
-data class ServerInfo(val privateApiReady: Boolean, val serverVersion: String?)
+/**
+ * What `GET /server/info` says. [privateApiReady] means tapbacks, read receipts and typing are available.
+ * [account] is the Apple account the Mac is signed in to, which tells two addresses of one server apart from two servers.
+ */
+data class ServerInfo(val privateApiReady: Boolean, val serverVersion: String?, val account: String? = null)
 
 /** The HTTP status is kept so callers can tell a bad password from an unreachable server. */
 class ApiException(val code: Int, message: String) : java.io.IOException(message) {

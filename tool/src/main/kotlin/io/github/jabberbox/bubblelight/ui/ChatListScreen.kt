@@ -41,7 +41,6 @@ import com.thelightphone.sdk.ui.lightClickable
 import io.github.jabberbox.bubblelight.BubbleGraph
 import io.github.jabberbox.bubblelight.Session
 import io.github.jabberbox.bubblelight.api.ApiException
-import io.github.jabberbox.bubblelight.data.Store
 import io.github.jabberbox.bubblelight.data.SyncStatus
 import java.io.IOException
 import kotlinx.coroutines.CancellationException
@@ -91,10 +90,6 @@ class ChatListViewModel(private val graph: BubbleGraph) : LightViewModel<Unit>()
     /** A one-line problem to show above the list, such as a first message that could not be sent. */
     val notice: StateFlow<String?> = _notice.asStateFlow()
 
-    fun failLogin(message: String) {
-        _login.value = LoginUi(error = message)
-    }
-
     /** Checks the password against the server. The password is never logged. */
     fun signIn(url: String, password: String) {
         if (_login.value.busy) return
@@ -110,7 +105,7 @@ class ChatListViewModel(private val graph: BubbleGraph) : LightViewModel<Unit>()
                     error = if (e.isAuthError) "That password was not accepted." else "The server answered with an error (${e.code}).",
                 )
             } catch (e: IOException) {
-                _login.value = LoginUi(error = "Could not reach the server. Is it running, and is your VPN connected?")
+                _login.value = LoginUi(error = "Could not reach the server. Check the address, and that the server is running and reachable from this phone.")
             } catch (e: Exception) {
                 _login.value = LoginUi(error = "Something went wrong (${e::class.simpleName}).")
             }
@@ -177,7 +172,7 @@ class ChatListScreen(sealedActivity: SealedLightActivity) : BubbleScreen<Unit, C
             )
             if (!login.busy) {
                 LightText(
-                    text = "You will enter the server address, then its password. Both stay on this phone.",
+                    text = "Scan the QR code your server shows, or type its address and password. Both stay on this phone.",
                     variant = LightTextVariant.Fine,
                     lighten = true,
                     align = TextAlign.Center,
@@ -201,16 +196,7 @@ class ChatListScreen(sealedActivity: SealedLightActivity) : BubbleScreen<Unit, C
     }
 
     private fun startSetup() {
-        navigateTo({ TextEntryScreen(it, title = "Server address", submitLabel = "NEXT") }) { typed ->
-            val url = Store.normalizeUrl(typed)
-            if (url == null) {
-                viewModel.failLogin("That does not look like a server address.")
-                return@navigateTo
-            }
-            navigateTo({ TextEntryScreen(it, title = "Password", submitLabel = "CONNECT") }) { password ->
-                viewModel.signIn(url, password.trim())
-            }
-        }
+        navigateTo({ SetupScreen(it) }) { setup -> viewModel.signIn(setup.url, setup.password) }
     }
 
     @Composable
