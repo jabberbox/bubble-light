@@ -1,15 +1,23 @@
 package io.github.jabberbox.bubblelight.ui
 
 import android.util.Log
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -17,10 +25,14 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewModelScope
 import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
@@ -29,9 +41,12 @@ import com.thelightphone.sdk.callRemoteServiceMethod
 import com.thelightphone.sdk.shared.LightServiceMethod
 import com.thelightphone.sdk.ui.LightBarButton
 import com.thelightphone.sdk.ui.LightBottomBar
+import com.thelightphone.sdk.ui.LightIcon
+import com.thelightphone.sdk.ui.LightIconConfiguration
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightText
 import com.thelightphone.sdk.ui.LightTextVariant
+import com.thelightphone.sdk.ui.LightThemeTokens
 import com.thelightphone.sdk.ui.LightTopBar
 import com.thelightphone.sdk.ui.LightTopBarCenter
 import com.thelightphone.sdk.ui.gridUnitsAsDp
@@ -44,6 +59,7 @@ import io.github.jabberbox.bubblelight.data.MessageState
 import io.github.jabberbox.bubblelight.data.Tapback
 import io.github.jabberbox.bubblelight.data.Tapbacks
 import io.github.jabberbox.bubblelight.media.PhotoRef
+import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
@@ -174,6 +190,9 @@ class ThreadViewModel(private val graph: BubbleGraph, private val chatGuid: Stri
 
     fun send(text: String) = repo.send(sendTarget, text)
 
+    /** Sends a finished recording, given by its path, as a voice message. */
+    fun sendVoice(path: String) = repo.sendVoice(sendTarget, File(path))
+
     fun retry(id: String) = repo.retry(id)
 
     /** Hands the number to LightOS, which opens its dialer with it filled in. */
@@ -193,6 +212,11 @@ class ThreadViewModel(private val graph: BubbleGraph, private val chatGuid: Stri
 // 179 pixels, which here is the 108 pixel stamp-and-text block plus this gap, and a stamp sits 5 pixels above its text.
 private const val MESSAGE_GAP_DESIGN_PX = 31.5f
 private const val STAMP_GAP_DESIGN_PX = 2.2f
+
+// The stock attach sheet: 650 pixels tall (from y = 590 to the bottom), with its icons' tops 197 pixels below its top
+// edge less the 40 pixels of touch margin around each icon, which is 4 grid units square here.
+private const val SHEET_UNITS = 16.25f
+private const val SHEET_ICONS_TOP_UNITS = 3.925f
 
 // The stock group thread puts the stamp 50 pixels under the sender's name, which two boxes of this size already take up.
 private const val SENDER_GAP_DESIGN_PX = 0.4f
@@ -226,34 +250,97 @@ class ThreadScreen(
             if (listState.firstVisibleItemIndex <= 1) listState.scrollToItem(0)
         }
 
+        var attachOpen by remember { mutableStateOf(false) }
+
         BubbleTheme {
-            LightTopBar(
-                leftButton = LightBarButton.LightIcon(icon = LightIcons.BACK, onClick = { goBack() }),
-                center = LightTopBarCenter.Text(title),
-                modifier = Modifier.padding(bottom = 1f.gridUnitsAsDp()),
-            )
-            // The stock thread starts one grid unit under the top bar and ends one above the bottom bar, with its
-            // text 80 pixels in from the left and a scrollbar in the gutter on the right.
-            Row(Modifier.weight(1f).fillMaxWidth().padding(bottom = 1f.gridUnitsAsDp())) {
-                // Messages arrive newest first; the reversed layout puts index 0 at the bottom, with older history above.
-                LazyColumn(
-                    state = listState,
-                    reverseLayout = true,
-                    modifier = Modifier.weight(1f).fillMaxHeight(),
-                    contentPadding = PaddingValues(start = 2f.gridUnitsAsDp()),
-                    verticalArrangement = Arrangement.spacedBy(MESSAGE_GAP_DESIGN_PX.stockDp()),
-                ) {
-                    items(messages, key = { it.id }) { m -> MessageItem(m) }
+            Box(Modifier.weight(1f).fillMaxWidth()) {
+                Column(Modifier.fillMaxSize()) {
+                    LightTopBar(
+                        leftButton = LightBarButton.LightIcon(icon = LightIcons.BACK, onClick = { if (attachOpen) attachOpen = false else goBack() }),
+                        center = LightTopBarCenter.Text(title),
+                        modifier = Modifier.padding(bottom = 1f.gridUnitsAsDp()),
+                    )
+                    // The stock thread starts one grid unit under the top bar and ends one above the bottom bar, with its
+                    // text 80 pixels in from the left and a scrollbar in the gutter on the right.
+                    Row(Modifier.weight(1f).fillMaxWidth().padding(bottom = 1f.gridUnitsAsDp())) {
+                        // Messages arrive newest first; the reversed layout puts index 0 at the bottom, with older history above.
+                        LazyColumn(
+                            state = listState,
+                            reverseLayout = true,
+                            modifier = Modifier.weight(1f).fillMaxHeight(),
+                            contentPadding = PaddingValues(start = 2f.gridUnitsAsDp()),
+                            verticalArrangement = Arrangement.spacedBy(MESSAGE_GAP_DESIGN_PX.stockDp()),
+                        ) {
+                            items(messages, key = { it.id }) { m -> MessageItem(m) }
+                        }
+                        StockScrollbar(listState, fromEnd = true)
+                    }
+                    LightBottomBar(
+                        items = listOf(
+                            callNumber?.let { LightBarButton.LightIcon(icon = LightIcons.CALL, onClick = viewModel::call) },
+                            LightBarButton.LightIcon(icon = LightIcons.ADD, onClick = { attachOpen = true }),
+                            LightBarButton.LightIcon(icon = LightIcons.COMPOSE_MESSAGE, onClick = ::compose),
+                        ),
+                    )
                 }
-                StockScrollbar(listState, fromEnd = true)
+                if (attachOpen) {
+                    AttachSheet(onClose = { attachOpen = false }, onVoice = {
+                        attachOpen = false
+                        recordVoice()
+                    })
+                }
             }
+        }
+    }
+
+    /**
+     * What can be added to a message: the half-screen sheet the stock app opens from its plus button. Only a voice
+     * message is offered, because the SDK gives a tool no way to open the camera or pick a photo. Taps outside the
+     * sheet close it.
+     */
+    @Composable
+    private fun BoxScope.AttachSheet(onClose: () -> Unit, onVoice: () -> Unit) {
+        Box(
+            Modifier
+                .fillMaxSize()
+                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onClose),
+        )
+        // The stock sheet starts 590 pixels down and has no rule, text or frame: its choices are bare icons in a row,
+        // 80 pixels square and centered at 827 pixels, and a chevron where the bar's buttons were.
+        Column(
+            Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .height(SHEET_UNITS.gridUnitsAsDp())
+                .background(LightThemeTokens.colors.background)
+                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = {}),
+        ) {
+            Spacer(Modifier.height(SHEET_ICONS_TOP_UNITS.gridUnitsAsDp()))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+                SheetIcon(icon = LightIcons.AUDIO_MESSAGE, description = "Audio message", onClick = onVoice)
+            }
+            Spacer(Modifier.weight(1f))
             LightBottomBar(
-                items = listOf(
-                    callNumber?.let { LightBarButton.LightIcon(icon = LightIcons.CALL, onClick = viewModel::call) },
-                    LightBarButton.LightIcon(icon = LightIcons.COMPOSE_MESSAGE, onClick = ::compose),
-                ),
+                items = listOf(LightBarButton.LightIcon(icon = LightIcons.DOWN, onClick = onClose, contentDescription = "Close")),
+                modifier = Modifier.offset(y = 0.675f.gridUnitsAsDp()),
             )
         }
+    }
+
+    /** A choice in the sheet, with a touch target wider than the 80 pixel icon. */
+    @Composable
+    private fun SheetIcon(icon: LightIconConfiguration, description: String, onClick: () -> Unit) {
+        Box(
+            Modifier.size(4f.gridUnitsAsDp()).lightClickable(onClick = onClick),
+            contentAlignment = Alignment.Center,
+        ) {
+            LightIcon(icon = icon, contentDescription = description)
+        }
+    }
+
+    private fun recordVoice() {
+        val title = viewModel.title.value
+        navigateTo({ VoiceMessageScreen(it, title) }) { path -> viewModel.sendVoice(path) }
     }
 
     private fun compose() {

@@ -71,6 +71,9 @@ cached on the phone are cleared and downloaded again from the new server.
   an unnamed group titled by its members' initials, for example "PA, JT". The sizes were measured from a real
   Light Phone III.
 - Writing and sending messages, starting new conversations by name, number or email.
+- Voice messages: the plus button opens a half-screen sheet, as in the stock app, with **Audio message**. Record,
+  listen back, then send or throw it away. With the server's Private API on, it arrives as an iMessage voice
+  message; without it, as an ordinary audio file. A failed one can be sent again by tapping it.
 - Photos in messages, with a full-screen viewer (pinch to zoom, double tap to reset).
 - Tapbacks shown as a line under the message they belong to.
 - Delivered and Read status on your newest message.
@@ -85,16 +88,20 @@ cached on the phone are cleared and downloaded again from the new server.
   push channel is built for Light's own push service, which a self-hosted BlueBubbles server has no way to
   feed. Messages that arrive while the tool is closed appear as soon as you open it. Live delivery runs only
   while the tool is on screen.
-- **No sending photos or files.** The SDK gives a tool no access to the camera app or the photo picker.
-  Receiving and viewing photos works.
+- **No sending photos or files.** The SDK gives a tool no way to take a picture or pick one: CameraX is not
+  exposed to tools, the gallery permission is not on Light's allowlist, and `startActivity` and
+  `contentResolver` are blocked. Receiving and viewing photos works, and so does sending a voice message,
+  since the SDK has an audio recorder. The sheet will gain Camera and Photo if Light adds those APIs.
 - **Tapbacks, typing indicators and edits cannot be sent**, and the password is visible while you type it,
   because the Light keyboard editor has no masked mode.
 
 ## Privacy
 
 Everything stays between the phone and your server. There is no analytics, no tracking and no advertising.
-`tool/lighttool.toml` declares the internet permission, the camera permission and the `cleartext-http`
-capability. The camera is used only to scan the server's setup QR code, and no image is stored or sent. The
+`tool/lighttool.toml` declares the internet permission, the camera permission, the microphone permission and the
+`cleartext-http` capability. The camera is used only to scan the server's setup QR code, and no image is stored
+or sent. The microphone is used only while you are recording a voice message, which is sent to your server and
+deleted from the phone once it has arrived. The
 capability lets the tool reach a server on your home network over plain HTTP. The SDK's own libraries add a few
 more permissions to every tool's manifest; this tool does not use them. Use HTTPS whenever the server is
 reachable from outside your home network.

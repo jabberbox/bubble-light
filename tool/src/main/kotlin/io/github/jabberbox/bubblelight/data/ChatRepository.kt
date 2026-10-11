@@ -4,6 +4,7 @@ import androidx.room.withTransaction
 import io.github.jabberbox.bubblelight.api.BlueBubblesApi
 import io.github.jabberbox.bubblelight.api.ChatInfo
 import io.github.jabberbox.bubblelight.api.ParsedMessage
+import java.io.File
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -33,6 +34,8 @@ class ChatRepository(
     private val store: Store,
     private val scope: CoroutineScope,
     private val log: (String) -> Unit,
+    /** Where voice recordings wait until the server has them, so a failed one can be sent again. */
+    private val voiceDir: File,
 ) {
     private val syncMutex = Mutex()
     private var lastSyncAt = 0L
@@ -304,8 +307,28 @@ class ChatRepository(
         scope.launch { deliver(row) { method -> api.sendText(chatGuid, body, id, method) } }
     }
 
+    /**
+     * Sends a recording from [voiceDir] as a voice message. The row shows at once as "[Audio]" and the file is kept
+     * until the server has it, so a failure can be retried.
+     */
+    fun sendVoice(chatGuid: String, file: File) {
+        if (!file.exists() || file.length() == 0L) return
+        val id = "temp-${UUID.randomUUID()}"
+        val attachment = AttachmentInfo(guid = id, mimeType = VOICE_MIME, name = file.name)
+        val row = MessageEntity(
+            guid = id, chatGuid = chatGuid, text = "", dateCreated = System.currentTimeMillis(),
+            fromMe = true, sender = null, attachments = AttachmentJson.encode(listOf(attachment)),
+            tempGuid = id, state = MessageState.SENDING,
+        )
+        scope.launch {
+            deliver(row, onSent = { file.delete() }) { method ->
+                api.sendAttachment(chatGuid, file, VOICE_NAME, VOICE_MIME, id, method, voice = true)
+            }
+        }
+    }
+
     /** Stores the local copy, then runs [call] and settles the row from what it returns. */
-    private suspend fun deliver(row: MessageEntity, call: (method: String) -> MessageEntity?) {
+    private suspend fun deliver(row: MessageEntity, onSent: () -> Unit = {}, call: (method: String) -> MessageEntity?) {
         db.withTransaction {
             db.messages().upsert(listOf(row))
             db.chats().recompute(listOf(row.chatGuid))
@@ -322,6 +345,7 @@ class ChatRepository(
                 }
                 db.chats().recompute(listOf(row.chatGuid))
             }
+            onSent()
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -337,7 +361,9 @@ class ChatRepository(
             if (row.state != MessageState.FAILED && row.error == 0) return@launch
             db.messages().delete(guid)
             db.chats().recompute(listOf(row.chatGuid))
-            send(row.chatGuid, row.text)
+            // A failed voice message still has its recording on disk; anything else is text.
+            val recording = row.attachmentList.firstOrNull { it.mimeType == VOICE_MIME }?.name?.let { File(voiceDir, it) }
+            if (recording != null) sendVoice(row.chatGuid, recording) else send(row.chatGuid, row.text)
         }
     }
 
@@ -392,5 +418,9 @@ class ChatRepository(
         const val GAP_MAX = 2000
         const val MIN_SYNC_GAP_MS = 5_000L
         const val CONTACTS_TTL_MS = 6 * 60 * 60 * 1000L
+
+        // The SDK's recorder writes MPEG-4 audio; Messages names a voice message this way.
+        const val VOICE_MIME = "audio/mp4"
+        const val VOICE_NAME = "Audio Message.m4a"
     }
 }

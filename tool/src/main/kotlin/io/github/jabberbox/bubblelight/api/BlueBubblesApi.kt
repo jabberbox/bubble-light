@@ -96,6 +96,37 @@ class BlueBubblesApi(baseUrl: String, private val password: String) {
         return BlueBubblesJson.parseMessage(data, chatGuid)?.message
     }
 
+    /**
+     * `POST /message/attachment`: uploads [file] as a multipart form, streamed from disk. With [voice] set and the
+     * Private API on, the server treats it as an iMessage voice message and converts it to the format Messages
+     * uses; without the Private API it goes as an ordinary audio file. Returns the created message when the
+     * server sends it back.
+     */
+    fun sendAttachment(chatGuid: String, file: File, name: String, mimeType: String, tempGuid: String, method: String, voice: Boolean): MessageEntity? {
+        val fields = linkedMapOf("chatGuid" to chatGuid, "tempGuid" to tempGuid, "name" to name, "method" to method)
+        if (voice && method == "private-api") fields["isAudioMessage"] = "true"
+        val form = Multipart(fields, fileField = "attachment", fileName = name, mimeType = mimeType)
+        val conn = (URL("$baseUrl/api/v1/message/attachment?password=${enc(password)}").openConnection() as HttpURLConnection).apply {
+            requestMethod = "POST"
+            connectTimeout = 15_000
+            readTimeout = 120_000 // the server may convert the audio before it answers
+            doOutput = true
+            setRequestProperty("Accept", "application/json")
+            setRequestProperty("Content-Type", form.contentType)
+            setFixedLengthStreamingMode(form.length(file.length()))
+        }
+        conn.outputStream.use { out ->
+            out.write(form.head)
+            file.inputStream().use { it.copyTo(out) }
+            out.write(form.tail)
+        }
+        val code = conn.responseCode
+        val response = (if (code in 200..299) conn.inputStream else conn.errorStream)?.bufferedReader()?.use { it.readText() } ?: ""
+        if (code !in 200..299) throw ApiException(code, "send attachment failed ($code)")
+        val data = dataObject(response) ?: return null
+        return BlueBubblesJson.parseMessage(data, chatGuid)?.message
+    }
+
     /** `POST /chat/:guid/read`, marking the chat read and sending a read receipt. Needs the Private API. */
     fun markRead(chatGuid: String) {
         requestChecked("POST", "/api/v1/chat/${enc(chatGuid)}/read", null, what = "mark read")

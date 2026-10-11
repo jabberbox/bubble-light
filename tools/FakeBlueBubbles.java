@@ -175,6 +175,7 @@ public class FakeBlueBubbles {
     }
 
     static final Map<String, byte[]> uploads = new HashMap<>();
+    static final Map<String, String> uploadTypes = new HashMap<>();
 
     /** Uploads are made to take a couple of seconds so the app's sending state can be seen; the sleep is outside the lock. */
     static void handle(HttpExchange ex) throws IOException {
@@ -288,14 +289,19 @@ public class FakeBlueBubbles {
             if (chat == null) { json(ex, 404, "{\"status\":404}"); return; }
             String attGuid = "UP-" + (++counter);
             uploads.put(attGuid, file);
+            // The type the client gave the file part, so audio is not mislabeled as a photo.
+            int typeAt = s.indexOf("Content-Type:", s.indexOf("name=\"attachment\""));
+            String mime = typeAt > 0 ? s.substring(typeAt + "Content-Type:".length(), s.indexOf("\r\n", typeAt)).trim() : "image/jpeg";
+            uploadTypes.put(attGuid, mime);
             Msg m = new Msg("MSG-" + (++counter), chat, "￼", System.currentTimeMillis(), true, null, 0,
                 ",\"tempGuid\":" + q(tempGuid) + ",\"attachments\":[{\"guid\":" + q(attGuid)
-                    + ",\"mimeType\":\"image/jpeg\",\"transferName\":" + q(name) + ",\"width\":0,\"height\":0}]");
+                    + ",\"mimeType\":" + q(mime) + ",\"transferName\":" + q(name) + ",\"width\":0,\"height\":0}]");
             messages.add(m);
-            System.out.println("  uploaded " + file.length + " bytes as " + name);
+            System.out.println("  uploaded " + file.length + " bytes as " + name + " (" + mime + "), voice message: "
+                + "true".equals(multipartField(s, "isAudioMessage")) + ", method: " + multipartField(s, "method"));
             json(ex, 200, "{\"status\":200,\"data\":" + msgJson(m, true) + "}");
         } else if (path.matches("/api/v1/attachment/.+/download") && uploads.containsKey(path.split("/")[4])) {
-            send(ex, 200, "image/jpeg", uploads.get(path.split("/")[4]));
+            send(ex, 200, uploadTypes.getOrDefault(path.split("/")[4], "image/jpeg"), uploads.get(path.split("/")[4]));
         } else if (path.matches("/api/v1/attachment/.+/download")) {
             BufferedImage img = new BufferedImage(900, 600, BufferedImage.TYPE_INT_RGB);
             Graphics2D g = img.createGraphics();

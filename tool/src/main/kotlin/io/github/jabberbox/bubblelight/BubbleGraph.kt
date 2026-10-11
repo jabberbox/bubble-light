@@ -11,6 +11,7 @@ import io.github.jabberbox.bubblelight.media.MediaCache
 import io.github.jabberbox.bubblelight.media.MediaLoader
 import com.thelightphone.sdk.SealedLightContext
 import com.thelightphone.sdk.buildDatabase
+import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -34,6 +35,9 @@ class BubbleGraph private constructor(private val lightContext: SealedLightConte
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     val store = Store(lightContext.dataStore, scope)
     private val mediaCache = MediaCache(lightContext.filesDir)
+
+    /** Voice recordings, from being recorded until the server has them. */
+    val voiceDir = File(lightContext.filesDir, "voice").apply { mkdirs() }
 
     private val db: AppDatabase by lazy { lightContext.buildDatabase(AppDatabase::class.java, "bubblelight.db") }
 
@@ -63,7 +67,7 @@ class BubbleGraph private constructor(private val lightContext: SealedLightConte
     private fun buildSession() {
         val url = store.baseUrl ?: return
         val password = store.password ?: return
-        val repo = ChatRepository(db, BlueBubblesApi(url, password), store, scope, ::log)
+        val repo = ChatRepository(db, BlueBubblesApi(url, password), store, scope, ::log, voiceDir)
         val live = LiveSocket(
             baseUrl = url,
             password = password,
@@ -137,7 +141,7 @@ class BubbleGraph private constructor(private val lightContext: SealedLightConte
         if (!sameServer) {
             _session.value = null
             withContext(Dispatchers.IO) {
-                mediaCache.clear()
+                clearLocalFiles()
                 db.clearAllTables()
             }
             store.resetSyncState()
@@ -156,11 +160,17 @@ class BubbleGraph private constructor(private val lightContext: SealedLightConte
         _session.value?.live?.stop()
         _session.value = null
         withContext(Dispatchers.IO) {
-            mediaCache.clear()
+            clearLocalFiles()
             db.clearAllTables()
         }
         store.resetSyncState()
         buildSession()
+    }
+
+    /** Photos downloaded for display and recordings waiting to be sent, both of which belong to the chats being dropped. */
+    private fun clearLocalFiles() {
+        mediaCache.clear()
+        voiceDir.listFiles()?.forEach { it.delete() }
     }
 
     /** Forgets the server and everything cached from it. */
@@ -168,7 +178,7 @@ class BubbleGraph private constructor(private val lightContext: SealedLightConte
         _session.value?.live?.stop()
         _session.value = null
         withContext(Dispatchers.IO) {
-            mediaCache.clear()
+            clearLocalFiles()
             db.clearAllTables()
         }
         store.clear()
