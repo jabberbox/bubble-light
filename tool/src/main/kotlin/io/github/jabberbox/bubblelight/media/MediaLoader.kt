@@ -57,6 +57,9 @@ class MediaLoader(
         }
     }
 
+    /** The attachment as the server has it, downloaded once and kept in the cache, for sounds and anything else played from a file. */
+    suspend fun file(guid: String): File = original(PhotoRef(guid, 0, 0))
+
     private suspend fun original(ref: PhotoRef): File {
         val file = cache.fileFor(ref.guid)
         if (file.exists() && file.length() > 0) {

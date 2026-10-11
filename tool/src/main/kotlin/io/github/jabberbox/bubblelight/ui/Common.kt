@@ -1,15 +1,22 @@
 package io.github.jabberbox.bubblelight.ui
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.unit.dp
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
@@ -35,6 +42,38 @@ fun BubbleTheme(content: @Composable ColumnScope.() -> Unit) {
                 .background(LightThemeTokens.colors.background),
             content = content,
         )
+    }
+}
+
+/**
+ * The one mark that tells Bubble Light's list from the stock one: a small outlined speech bubble in the secondary
+ * gray, about one grid unit tall. Drawn as a single outline so the tail opens into the bubble.
+ */
+@Composable
+fun BubbleMark(modifier: Modifier = Modifier) {
+    val color = LightThemeTokens.colors.contentSecondary
+    Canvas(modifier.size(width = 1.1f.gridUnitsAsDp(), height = 1f.gridUnitsAsDp())) {
+        val stroke = 2.5.dp.toPx()
+        val half = stroke / 2
+        val right = size.width - half
+        val body = size.height * 0.78f
+        val r = size.height * 0.28f
+        val path = Path().apply {
+            moveTo(half + r, half)
+            lineTo(right - r, half)
+            arcTo(Rect(right - 2 * r, half, right, half + 2 * r), -90f, 90f, false)
+            lineTo(right, body - r)
+            arcTo(Rect(right - 2 * r, body - 2 * r, right, body), 0f, 90f, false)
+            lineTo(size.width * 0.42f, body)
+            lineTo(size.width * 0.16f, size.height - half)
+            lineTo(size.width * 0.22f, body)
+            lineTo(half + r, body)
+            arcTo(Rect(half, body - 2 * r, half + 2 * r, body), 90f, 90f, false)
+            lineTo(half, half + r)
+            arcTo(Rect(half, half, half + 2 * r, half + 2 * r), 180f, 90f, false)
+            close()
+        }
+        drawPath(path, color, style = Stroke(width = stroke, join = StrokeJoin.Round))
     }
 }
 

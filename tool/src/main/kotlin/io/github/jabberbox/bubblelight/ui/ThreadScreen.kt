@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -37,6 +38,9 @@ import androidx.lifecycle.viewModelScope
 import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SimpleLightScreen
+import com.thelightphone.sdk.audio.DefaultLightAudio
+import com.thelightphone.sdk.audio.LightAudio
+import com.thelightphone.sdk.audio.LightAudioPlayer
 import com.thelightphone.sdk.callRemoteServiceMethod
 import com.thelightphone.sdk.shared.LightServiceMethod
 import com.thelightphone.sdk.ui.LightBarButton
@@ -60,6 +64,7 @@ import io.github.jabberbox.bubblelight.data.Tapback
 import io.github.jabberbox.bubblelight.data.Tapbacks
 import io.github.jabberbox.bubblelight.media.PhotoRef
 import java.io.File
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
@@ -77,10 +82,27 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+
+/** Where a sound in the thread is: being fetched, playing, paused, or not playable. */
+enum class AudioPhase { Loading, Playing, Paused, Failed }
+
+/** The one sound that is current in a thread, if any: which it is, what it is doing, and how far along. */
+data class AudioUi(
+    val guid: String? = null,
+    val phase: AudioPhase = AudioPhase.Paused,
+    val positionMs: Long = 0L,
+    val durationMs: Long = 0L,
+)
 
 @OptIn(ExperimentalCoroutinesApi::class)
-class ThreadViewModel(private val graph: BubbleGraph, private val chatGuid: String) : LightViewModel<Unit>() {
-    private val repo = requireNotNull(graph.session.value) { "a thread needs a signed-in session" }.repo
+class ThreadViewModel(
+    private val graph: BubbleGraph,
+    private val chatGuid: String,
+    audio: LightAudio,
+) : LightViewModel<Unit>() {
+    private val session = requireNotNull(graph.session.value) { "a thread needs a signed-in session" }
+    private val repo = session.repo
     private val whileVisible = SharingStarted.WhileSubscribed(5_000)
     private val limit = MutableStateFlow(PAGE)
     private val formatTime = MessageFormat.formatter()
@@ -131,8 +153,84 @@ class ThreadViewModel(private val graph: BubbleGraph, private val chatGuid: Stri
         conv?.takeIf { !it.isGroup }?.participants?.singleOrNull()?.takeIf { !it.contains('@') && it.count { c -> c.isDigit() } >= 7 }
     }.stateIn(viewModelScope, whileVisible, null)
 
+    /** Whether this chat is pinned to the top of the list. */
+    val pinned: StateFlow<Boolean> = combine(conversation, repo.pinned) { conv, pins ->
+        conv?.guids?.any { it in pins } == true
+    }.stateIn(viewModelScope, whileVisible, false)
+
+    fun togglePin() = repo.setPinned(guids.value, !pinned.value)
+
+    private val player: LightAudioPlayer = audio.newPlayer()
+    private val _audioUi = MutableStateFlow(AudioUi())
+
+    /** The sound last tapped in this thread. */
+    val audioUi: StateFlow<AudioUi> = _audioUi.asStateFlow()
+    private var audioJob: Job? = null
+
     init {
         viewModelScope.launch { repo.openThread(guids.value) }
+        viewModelScope.launch {
+            launch {
+                player.isPlaying.collect { playing ->
+                    _audioUi.update {
+                        when {
+                            it.guid == null || it.phase == AudioPhase.Failed -> it
+                            playing -> it.copy(phase = AudioPhase.Playing)
+                            it.phase == AudioPhase.Playing -> it.copy(phase = AudioPhase.Paused)
+                            else -> it
+                        }
+                    }
+                }
+            }
+            launch { player.positionMs.collect { p -> _audioUi.update { it.copy(positionMs = p) } } }
+            launch { player.durationMs.collect { d -> _audioUi.update { it.copy(durationMs = d) } } }
+            launch {
+                player.error.collect { e ->
+                    if (e != null) _audioUi.update { if (it.guid != null) it.copy(phase = AudioPhase.Failed) else it }
+                }
+            }
+        }
+    }
+
+    /**
+     * Plays a sound, or pauses it, or resumes it. A sound is fetched from the server the first time and kept, and one
+     * the phone cannot play says so rather than failing silently.
+     */
+    fun toggleAudio(ref: AudioRef) {
+        if (!ref.playable) return
+        val now = _audioUi.value
+        if (now.guid == ref.guid && now.phase != AudioPhase.Failed) {
+            when (now.phase) {
+                AudioPhase.Playing -> player.pause()
+                AudioPhase.Paused -> {
+                    if (now.durationMs > 0L && now.positionMs >= now.durationMs) player.seekTo(0L)
+                    player.play()
+                }
+                else -> Unit
+            }
+            return
+        }
+        player.stop()
+        _audioUi.value = AudioUi(ref.guid, AudioPhase.Loading)
+        audioJob?.cancel()
+        audioJob = viewModelScope.launch {
+            val file = try {
+                withContext(Dispatchers.IO) { session.loader.file(ref.guid) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.i("BubbleLight", "audio download failed: ${e::class.simpleName}")
+                _audioUi.value = AudioUi(ref.guid, AudioPhase.Failed)
+                return@launch
+            }
+            player.setSource(file)
+            player.play()
+        }
+    }
+
+    override fun onCleared() {
+        player.release()
+        super.onCleared()
     }
 
     /** A chat on screen counts as read: when it opens, and each time a newer message shows up while it is visible. */
@@ -149,11 +247,13 @@ class ThreadViewModel(private val graph: BubbleGraph, private val chatGuid: Stri
     override fun onScreenHide(screen: SimpleLightScreen<Unit>) {
         super.onScreenHide(screen)
         readJob?.cancel()
+        player.pause()
     }
 
     override fun onAppPause() {
         super.onAppPause()
         readJob?.cancel()
+        player.pause()
     }
 
     /**
@@ -222,13 +322,13 @@ private const val SHEET_ICONS_TOP_UNITS = 3.925f
 private const val SENDER_GAP_DESIGN_PX = 0.4f
 
 class ThreadScreen(
-    sealedActivity: SealedLightActivity,
+    private val sealed: SealedLightActivity,
     private val chatGuid: String,
-) : BubbleScreen<Unit, ThreadViewModel>(sealedActivity) {
+) : BubbleScreen<Unit, ThreadViewModel>(sealed) {
     override val viewModelClass: Class<ThreadViewModel>
         get() = ThreadViewModel::class.java
 
-    override fun createViewModel() = ThreadViewModel(graph, chatGuid)
+    override fun createViewModel() = ThreadViewModel(graph, chatGuid, DefaultLightAudio(sealed))
 
     @Composable
     override fun Body() {
@@ -236,6 +336,8 @@ class ThreadScreen(
         val messages by viewModel.messages.collectAsState()
         val callNumber by viewModel.callNumber.collectAsState()
         val loadTick by viewModel.loadTick.collectAsState()
+        val pinned by viewModel.pinned.collectAsState()
+        val audioUi by viewModel.audioUi.collectAsState()
         val listState = rememberLazyListState()
 
         // Ask for more history when the oldest loaded message comes into view, and again after each load if it still is.
@@ -258,6 +360,12 @@ class ThreadScreen(
                     LightTopBar(
                         leftButton = LightBarButton.LightIcon(icon = LightIcons.BACK, onClick = { if (attachOpen) attachOpen = false else goBack() }),
                         center = LightTopBarCenter.Text(title),
+                        // Where the stock thread has an empty slot: a star that pins the chat to the top of the list.
+                        rightButton = LightBarButton.LightIcon(
+                            icon = if (pinned) LightIcons.STAR else LightIcons.STAR_OUTLINE,
+                            onClick = viewModel::togglePin,
+                            contentDescription = if (pinned) "Unpin" else "Pin",
+                        ),
                         modifier = Modifier.padding(bottom = 1f.gridUnitsAsDp()),
                     )
                     // The stock thread starts one grid unit under the top bar and ends one above the bottom bar, with its
@@ -271,7 +379,7 @@ class ThreadScreen(
                             contentPadding = PaddingValues(start = 2f.gridUnitsAsDp()),
                             verticalArrangement = Arrangement.spacedBy(MESSAGE_GAP_DESIGN_PX.stockDp()),
                         ) {
-                            items(messages, key = { it.id }) { m -> MessageItem(m) }
+                            items(messages, key = { it.id }) { m -> MessageItem(m, audioUi) }
                         }
                         StockScrollbar(listState, fromEnd = true)
                     }
@@ -349,7 +457,7 @@ class ThreadScreen(
     }
 
     @Composable
-    private fun MessageItem(m: UiMessage) {
+    private fun MessageItem(m: UiMessage, audioUi: AudioUi) {
         if (m.event) {
             StockText(
                 text = m.text,
@@ -378,6 +486,7 @@ class ThreadScreen(
             if (loader != null) {
                 m.photos.forEach { photo -> PhotoBlock(photo, m.mine, loader) { openPhoto(photo) } }
             }
+            m.audios.forEach { AudioRow(it, audioUi, m.mine) }
             if (m.text.isNotEmpty()) {
                 StockText(text = m.text, style = StockType.Message, lighten = m.dim, align = end, modifier = Modifier.fillMaxWidth())
             }
@@ -387,6 +496,34 @@ class ThreadScreen(
             m.status?.let {
                 StockText(text = it, style = StockType.Stamp, lighten = true, align = TextAlign.End, modifier = Modifier.fillMaxWidth())
             }
+        }
+    }
+
+    /** A voice message as a play button and its time, like the stock app's. Tap to play, tap again to pause. */
+    @Composable
+    private fun AudioRow(ref: AudioRef, ui: AudioUi, mine: Boolean) {
+        val current = ui.guid == ref.guid
+        val phase = if (current) ui.phase else null
+        val label = when {
+            !ref.playable -> "Audio"
+            phase == AudioPhase.Loading -> "Loading"
+            phase == AudioPhase.Failed -> "Can't play this audio"
+            current && ui.durationMs > 0L -> "${MessageFormat.clock(ui.positionMs)} / ${MessageFormat.clock(ui.durationMs)}"
+            else -> "Audio"
+        }
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .let { if (ref.playable) it.lightClickable { viewModel.toggleAudio(ref) } else it }
+                .padding(vertical = 0.25f.gridUnitsAsDp()),
+            horizontalArrangement = if (mine) Arrangement.End else Arrangement.Start,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (ref.playable && phase != AudioPhase.Failed) {
+                LightIcon(icon = if (phase == AudioPhase.Playing) LightIcons.PAUSE else LightIcons.PLAY, size = 1.25f)
+                Spacer(Modifier.width(0.5f.gridUnitsAsDp()))
+            }
+            StockText(text = label, style = StockType.Message)
         }
     }
 

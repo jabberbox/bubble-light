@@ -62,6 +62,10 @@ data class AttachmentInfo(
     val isImage: Boolean
         get() = mimeType?.startsWith("image/") == true || (mimeType == null && name?.substringAfterLast('.', "")?.lowercase() in IMAGE_EXTENSIONS)
 
+    /** A voice message or other sound, which can be played here. Like [isImage], the file name decides when the type is missing. */
+    val isAudio: Boolean
+        get() = mimeType?.startsWith("audio/") == true || (mimeType == null && name?.substringAfterLast('.', "")?.lowercase() in AUDIO_EXTENSIONS)
+
     /** A short human type for something that is not shown inline, such as "Video". */
     val typeLabel: String
         get() = when {
@@ -119,6 +123,7 @@ data class MessageEntity(
 }
 
 private val IMAGE_EXTENSIONS = setOf("jpg", "jpeg", "png", "gif", "heic", "heif", "webp")
+private val AUDIO_EXTENSIONS = setOf("caf", "m4a", "mp3", "aac", "amr", "wav", "opus")
 
 object AttachmentJson {
     private val json = Json { ignoreUnknownKeys = true }

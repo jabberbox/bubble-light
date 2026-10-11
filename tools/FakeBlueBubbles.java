@@ -85,6 +85,9 @@ public class FakeBlueBubbles {
         add(sam, "Did you see the game last night? It went to overtime and the whole thing was wild from start to finish, "
             + "I could not believe the ending, they were down by twelve with five minutes to go.", 1500, false, "+15550100002", false, "");
         add(sam, "I missed it, tell me everything", 1490, true, null, false, "");
+        // A voice message, which the server serves as a three second tone.
+        add(sam, "￼", 3, false, "+15550100002", false,
+            ",\"attachments\":[{\"guid\":\"AUD-1\",\"mimeType\":\"audio/x-wav\",\"transferName\":\"Audio Message.wav\",\"width\":0,\"height\":0}]");
         add(jordan, "Can you send me the address?", 5, false, "+15550100003", true, "");
         add(stranger, "Your package has been delivered", 4000, false, "+15550100009", false, "");
 
@@ -302,6 +305,19 @@ public class FakeBlueBubbles {
             json(ex, 200, "{\"status\":200,\"data\":" + msgJson(m, true) + "}");
         } else if (path.matches("/api/v1/attachment/.+/download") && uploads.containsKey(path.split("/")[4])) {
             send(ex, 200, uploadTypes.getOrDefault(path.split("/")[4], "image/jpeg"), uploads.get(path.split("/")[4]));
+        } else if (path.matches("/api/v1/attachment/AUD-.+/download")) {
+            // Three seconds of a 440 Hz tone as 16-bit mono PCM in a WAV file, which any player can open.
+            int rate = 8000, samples = rate * 3;
+            ByteArrayOutputStream wav = new ByteArrayOutputStream();
+            java.nio.ByteBuffer head = java.nio.ByteBuffer.allocate(44).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+            head.put("RIFF".getBytes()).putInt(36 + samples * 2).put("WAVEfmt ".getBytes()).putInt(16).putShort((short) 1)
+                .putShort((short) 1).putInt(rate).putInt(rate * 2).putShort((short) 2).putShort((short) 16)
+                .put("data".getBytes()).putInt(samples * 2);
+            wav.write(head.array());
+            java.nio.ByteBuffer pcm = java.nio.ByteBuffer.allocate(samples * 2).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+            for (int i = 0; i < samples; i++) pcm.putShort((short) (Math.sin(2 * Math.PI * 440 * i / rate) * 8000));
+            wav.write(pcm.array());
+            send(ex, 200, "audio/wav", wav.toByteArray());
         } else if (path.matches("/api/v1/attachment/.+/download")) {
             BufferedImage img = new BufferedImage(900, 600, BufferedImage.TYPE_INT_RGB);
             Graphics2D g = img.createGraphics();

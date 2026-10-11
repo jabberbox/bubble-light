@@ -10,6 +10,14 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+/**
+ * A sound attached to a message. It can be played once the server has it: a recording of mine that is still being
+ * sent has only a temporary id, and nothing to download yet.
+ */
+data class AudioRef(val guid: String) {
+    val playable: Boolean get() = !guid.startsWith("temp-")
+}
+
 /** How one message is shown in a thread. */
 data class UiMessage(
     val id: String,
@@ -24,6 +32,8 @@ data class UiMessage(
     /** Tapping it sends it again. */
     val failed: Boolean,
     val photos: List<PhotoRef> = emptyList(),
+    /** Voice messages and sounds in it, each played from its own row. */
+    val audios: List<AudioRef> = emptyList(),
     /** Tapbacks on this message as one compact line, null when there are none. */
     val reactions: String? = null,
     /** "Delivered" or "Read", only ever on my newest message. */
@@ -71,9 +81,10 @@ object MessageFormat {
         }
         val attachments = m.attachmentList
         val photos = attachments.filter { it.isImage }.map { PhotoRef(it.guid, it.width, it.height) }
-        val others = attachments.filter { !it.isImage }.map { "[${it.typeLabel}]" }
+        val audios = attachments.filter { it.isAudio }.map { AudioRef(it.guid) }
+        val others = attachments.filter { !it.isImage && !it.isAudio }.map { "[${it.typeLabel}]" }
         val lines = listOfNotNull(m.text.ifEmpty { null }) + others
-        if (lines.isEmpty() && photos.isEmpty()) return null
+        if (lines.isEmpty() && photos.isEmpty() && audios.isEmpty()) return null
         val failed = m.state == MessageState.FAILED || m.error != 0
         val body = lines.joinToString("\n")
         // A photo takes a while to upload and the picture alone gives no sign it is still going.
@@ -93,9 +104,16 @@ object MessageFormat {
             dim = m.state == MessageState.SENDING,
             failed = failed,
             photos = photos,
+            audios = audios,
             reactions = ctx.tapbacks[m.guid]?.let { Tapbacks.summary(it, ctx.isGroup, ctx.contacts::sender) }?.ifEmpty { null },
             status = if (m.guid == ctx.statusFor) status(m) else null,
         )
+    }
+
+    /** A length of sound as minutes and seconds, for example "1:05". */
+    fun clock(ms: Long): String {
+        val seconds = ms.coerceAtLeast(0L) / 1_000L
+        return "%d:%02d".format(seconds / 60L, seconds % 60L)
     }
 
     /** Matches the stock app's stamps, for example "Jul 18 8:22 PM", where the space is a narrow no-break space. */

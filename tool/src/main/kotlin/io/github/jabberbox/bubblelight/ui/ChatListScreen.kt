@@ -13,10 +13,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -59,20 +61,62 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
-/** [haystack] is every name and address of the chat in lower case, which is what a search looks through. */
-data class ChatRow(val id: String, val name: String, val unread: Boolean, val haystack: String = "")
+/**
+ * One row of the chat list. [haystack] is every name and address of the chat in lower case, which is what a search
+ * looks through. A chat is [known] when someone in it is in the address book (or it has a name of its own), and
+ * [muted] rows are drawn in the lighter gray.
+ */
+data class ChatRow(
+    val id: String,
+    val name: String,
+    val unread: Boolean,
+    val haystack: String = "",
+    val known: Boolean = true,
+    val pinned: Boolean = false,
+    val muted: Boolean = false,
+)
+
+/** How the full list is split between the main list and the unknown senders behind its last row. */
+object ChatLists {
+    /** The id of the last row, which opens the unknown senders instead of a chat. */
+    const val UNKNOWN_ID = "unknown-senders"
+
+    /** Pinned chats first, then chats from people you know, then a row for the rest if there are any. */
+    fun main(all: List<ChatRow>): List<ChatRow> {
+        val unknown = unknown(all)
+        val rest = all.filter { !it.pinned && it.known }
+        val footer = if (unknown.isEmpty()) {
+            emptyList()
+        } else {
+            listOf(ChatRow(UNKNOWN_ID, "Unknown senders", unread = unknown.any { it.unread }, muted = true))
+        }
+        return all.filter { it.pinned } + rest + footer
+    }
+
+    /** Chats from numbers and addresses that are not in the address book, unless pinned. */
+    fun unknown(all: List<ChatRow>): List<ChatRow> = all.filter { !it.pinned && !it.known }
+}
 
 /** Height of a row in the chat list, in grid units: the stock list's 150 pixel rows and 10 pixel gaps. */
 private const val ROW_UNITS = 4f
 
 /** The rows of the chat list for a session, newest first. */
-internal fun chatRows(s: Session): Flow<List<ChatRow>> = combine(s.repo.conversations(), s.repo.contacts) { conversations, contacts ->
-    conversations.map { conv ->
-        val name = contacts.title(conv.displayName, conv.participants)
-        val everyone = conv.participants.flatMap { listOf(contacts.fullName(it), it) }
-        ChatRow(conv.guid, name, conv.unread, (listOf(conv.displayName, name) + everyone).joinToString(" ").lowercase())
+internal fun chatRows(s: Session): Flow<List<ChatRow>> =
+    combine(s.repo.conversations(), s.repo.contacts, s.repo.pinned) { conversations, contacts, pinned ->
+        conversations.map { conv ->
+            val name = contacts.title(conv.displayName, conv.participants)
+            val everyone = conv.participants.flatMap { listOf(contacts.fullName(it), it) }
+            ChatRow(
+                id = conv.guid,
+                name = name,
+                unread = conv.unread,
+                haystack = (listOf(conv.displayName, name) + everyone).joinToString(" ").lowercase(),
+                // Before the address book has loaded nobody can be told from a stranger, so everyone counts as known.
+                known = contacts.isEmpty || conv.displayName.isNotBlank() || contacts.knowsAny(conv.participants),
+                pinned = conv.guids.any { it in pinned },
+            )
+        }
     }
-}
 
 /**
  * The stock list: rows four grid units tall, which lets the SDK's list draw its scrollbar the way the stock one is.
@@ -108,6 +152,7 @@ private fun ChatRowItem(chat: ChatRow, onClick: () -> Unit) {
         StockText(
             text = chat.name,
             style = StockType.Name,
+            lighten = chat.muted,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),
@@ -260,18 +305,23 @@ class ChatListScreen(sealedActivity: SealedLightActivity) : BubbleScreen<Unit, C
         val status by viewModel.status.collectAsState()
         val notice by viewModel.notice.collectAsState()
         val progress by viewModel.progress.collectAsState()
+        val visible = remember(rows) { ChatLists.main(rows) }
         // The stock list has no title bar, only the same height of empty space above the first row. A sync or a
-        // problem, when there is one, is shown in that space.
+        // problem, when there is one, is shown in that space. Otherwise it holds the one mark that tells this list
+        // from the stock one: a small speech bubble.
         val line = notice ?: if (status == SyncStatus.Offline) "Offline, will retry" else null
         val running = progress
         Box(
             Modifier.fillMaxWidth().height(3f.gridUnitsAsDp()).padding(horizontal = 2f.gridUnitsAsDp()),
-            contentAlignment = Alignment.BottomStart,
+            // The mark sits at the left edge of the names below it, 80 pixels in.
+            contentAlignment = if (running != null || line != null) Alignment.BottomStart else Alignment.CenterStart,
         ) {
             if (running != null) {
                 SyncProgressView(running, Modifier.padding(bottom = 0.25f.gridUnitsAsDp()))
             } else if (line != null) {
                 LightText(text = line, variant = LightTextVariant.Fine, lighten = true, modifier = Modifier.padding(bottom = 0.25f.gridUnitsAsDp()))
+            } else {
+                BubbleMark()
             }
         }
         if (rows.isEmpty()) {
@@ -283,7 +333,9 @@ class ChatListScreen(sealedActivity: SealedLightActivity) : BubbleScreen<Unit, C
                 )
             }
         } else {
-            ChatRowList(rows, Modifier.weight(1f), onOpen = ::openThread)
+            ChatRowList(visible, Modifier.weight(1f)) { id ->
+                if (id == ChatLists.UNKNOWN_ID) openUnknownSenders() else openThread(id)
+            }
         }
         LightBottomBar(
             items = listOf(
@@ -296,6 +348,11 @@ class ChatListScreen(sealedActivity: SealedLightActivity) : BubbleScreen<Unit, C
 
     private fun openThread(guid: String) {
         navigateTo({ ThreadScreen(it, guid) })
+    }
+
+    /** The chats from numbers and addresses that are not in the address book. */
+    private fun openUnknownSenders() {
+        navigateTo({ UnknownSendersScreen(it) }) { guid -> openThread(guid) }
     }
 
     /** Asks for words with the Light keyboard, as the stock Phone app does, then lists the chats that match. */

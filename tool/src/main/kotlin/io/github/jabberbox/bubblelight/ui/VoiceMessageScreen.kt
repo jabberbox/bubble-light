@@ -228,8 +228,5 @@ class VoiceMessageScreen(
         goBack(recorded.absolutePath)
     }
 
-    private fun clock(ms: Long): String {
-        val seconds = ms.coerceAtLeast(0L) / 1_000L
-        return "%d:%02d".format(seconds / 60L, seconds % 60L)
-    }
+    private fun clock(ms: Long): String = MessageFormat.clock(ms)
 }

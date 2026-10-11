@@ -145,6 +145,7 @@ class BubbleGraph private constructor(private val lightContext: SealedLightConte
                 db.clearAllTables()
             }
             store.resetSyncState()
+            store.clearPins()
         }
         store.saveServer(url, password)
         store.updatePrivateApi(info.privateApiReady)

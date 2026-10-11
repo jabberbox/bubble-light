@@ -66,7 +66,7 @@ class ChatSearchScreen(
                     LightText(text = "No matches", variant = LightTextVariant.Copy, lighten = true)
                 }
             } else {
-                ChatRowList(rows, Modifier.weight(1f), onOpen = { guid -> goBack(guid) })
+                ChatRowList(rows, Modifier.weight(1f)) { guid -> goBack(guid) }
             }
         }
     }

@@ -74,6 +74,39 @@ class MessageFormatTest {
     }
 
     @Test
+    fun soundsAreSeparateFromTheLabelsAndOnlyPlayableOnceTheServerHasThem() {
+        val ui = MessageFormat.toUi(
+            message(
+                text = "",
+                attachments = listOf(
+                    AttachmentInfo("AUD1", "audio/x-caf", "Audio Message.caf"),
+                    AttachmentInfo("temp-9", "audio/mp4", "voice.m4a"),
+                    // No type yet, as a message just sent can come back: the file name decides.
+                    AttachmentInfo("AUD2", null, "note.m4a"),
+                ),
+            ),
+            ctx(), time,
+        )!!
+        assertEquals(listOf("AUD1", "temp-9", "AUD2"), ui.audios.map { it.guid })
+        assertEquals(listOf(true, false, true), ui.audios.map { it.playable })
+        assertEquals("", ui.text)
+    }
+
+    @Test
+    fun aVoiceMessageAloneIsNotDropped() {
+        val ui = MessageFormat.toUi(message(text = "", attachments = listOf(AttachmentInfo("AUD1", "audio/mp4"))), ctx(), time)
+        assertEquals(1, ui!!.audios.size)
+    }
+
+    @Test
+    fun theClockReadsMinutesAndSeconds() {
+        assertEquals("0:00", MessageFormat.clock(-5))
+        assertEquals("0:09", MessageFormat.clock(9_400))
+        assertEquals("1:05", MessageFormat.clock(65_000))
+        assertEquals("12:00", MessageFormat.clock(720_000))
+    }
+
+    @Test
     fun aCaptionStaysWithItsPhoto() {
         val ui = MessageFormat.toUi(message(text = "look", attachments = listOf(AttachmentInfo("A1", "image/png"))), ctx(), time)!!
         assertEquals("look", ui.text)

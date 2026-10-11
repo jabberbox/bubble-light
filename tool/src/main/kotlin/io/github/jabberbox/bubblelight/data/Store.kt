@@ -6,7 +6,11 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
@@ -51,6 +55,11 @@ class Store(private val dataStore: DataStore<Preferences>, private val scope: Co
     var serverAccount: String? = null
         private set
 
+    private val _pinned = MutableStateFlow<Set<String>>(emptySet())
+
+    /** The chats pinned to the top of the list, by room guid. Pinning a conversation pins every room it is made of. */
+    val pinned: StateFlow<Set<String>> = _pinned.asStateFlow()
+
     val password: String?
         get() = encryptedPassword?.let { runCatching { SecureStore.decrypt(it) }.getOrNull() }
 
@@ -66,6 +75,20 @@ class Store(private val dataStore: DataStore<Preferences>, private val scope: Co
         lastContactsSync = prefs[KEY_CONTACTS_SYNC] ?: 0L
         serverAccount = prefs[KEY_ACCOUNT]
         chatListImported = prefs[KEY_CHAT_LIST_IMPORTED] ?: false
+        _pinned.value = prefs[KEY_PINNED] ?: emptySet()
+    }
+
+    /** Pins or unpins every room in [guids]. */
+    fun setPinned(guids: Collection<String>, pinned: Boolean) {
+        val next = if (pinned) _pinned.value + guids else _pinned.value - guids.toSet()
+        _pinned.value = next
+        persist { if (next.isEmpty()) it.remove(KEY_PINNED) else it[KEY_PINNED] = next }
+    }
+
+    /** Forgets every pin, for when the chats they pointed at are gone. */
+    fun clearPins() {
+        _pinned.value = emptySet()
+        persist { it.remove(KEY_PINNED) }
     }
 
     fun saveServer(url: String, password: String) {
@@ -130,8 +153,10 @@ class Store(private val dataStore: DataStore<Preferences>, private val scope: Co
         lastContactsSync = 0L
         serverAccount = null
         chatListImported = false
+        _pinned.value = emptySet()
         // The SDK keeps its own keys in this same DataStore, so only this tool's keys are removed.
         dataStore.edit { prefs ->
+            prefs.remove(KEY_PINNED)
             listOf(KEY_URL, KEY_PASSWORD, KEY_ACCOUNT).forEach { prefs.remove(it) }
             listOf(KEY_LAST_SEEN, KEY_CONTACTS_SYNC).forEach { prefs.remove(it) }
             listOf(KEY_PRIVATE_API, KEY_READ_RECEIPTS, KEY_CHAT_LIST_IMPORTED).forEach { prefs.remove(it) }
@@ -151,6 +176,7 @@ class Store(private val dataStore: DataStore<Preferences>, private val scope: Co
         private val KEY_CONTACTS_SYNC = longPreferencesKey("bb_contacts_sync")
         private val KEY_ACCOUNT = stringPreferencesKey("bb_server_account")
         private val KEY_CHAT_LIST_IMPORTED = booleanPreferencesKey("bb_chat_list_imported")
+        private val KEY_PINNED = stringSetPreferencesKey("bb_pinned_chats")
 
         /**
          * Turns what was typed or scanned into a server URL, with no trailing slash. A scheme that was given is kept.

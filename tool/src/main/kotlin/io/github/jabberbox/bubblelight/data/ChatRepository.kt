@@ -405,6 +405,11 @@ class ChatRepository(
         }
     }
 
+    /** The room guids of pinned chats. */
+    val pinned: StateFlow<Set<String>> get() = store.pinned
+
+    fun setPinned(guids: Collection<String>, pinned: Boolean) = store.setPinned(guids, pinned)
+
     /** Downloads one attachment to [dest], for the photo loader. */
     fun download(guid: String, dest: java.io.File) = api.downloadAttachment(guid, dest)
 

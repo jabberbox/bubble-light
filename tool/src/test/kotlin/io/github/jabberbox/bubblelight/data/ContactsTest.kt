@@ -38,6 +38,15 @@ class ContactsTest {
     }
 
     @Test
+    fun aChatIsKnownWhenAnyoneInItIsInTheAddressBook() {
+        assertTrue(contacts.knowsAny(listOf("+16085550000", "+16082646591")))
+        assertFalse(contacts.knowsAny(listOf("+16085550000")))
+        assertFalse(contacts.knowsAny(emptyList()))
+        assertTrue(Contacts().isEmpty)
+        assertFalse(contacts.isEmpty)
+    }
+
+    @Test
     fun theSenderLabelIsAFirstNameOrTheRawAddress() {
         assertEquals("Chris", contacts.sender("+16082646591"))
         assertEquals("+16085550000", contacts.sender("+16085550000"))

@@ -16,6 +16,12 @@ class Contacts(private val byKey: Map<String, Contact> = emptyMap()) {
     /** Full name for an address, or null if it is not in the address book. */
     fun name(address: String): String? = byKey[key(address)]?.name
 
+    /** True before the address book has loaded, when nobody can be told apart from a stranger yet. */
+    val isEmpty: Boolean get() = byKey.isEmpty()
+
+    /** Whether anyone in [participants] is in the address book. */
+    fun knowsAny(participants: List<String>): Boolean = participants.any { name(it) != null }
+
     /** Short label for a person in a line of text, such as a tapback summary: the first name. */
     fun sender(address: String): String = label(address, firstNameOnly = true)
 

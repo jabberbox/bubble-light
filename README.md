@@ -66,6 +66,13 @@ cached on the phone are cleared and downloaded again from the new server.
 - Conversation list of every chat the server has, with unread dots and contact names taken from the Mac's
   address book. Chats that were already quiet when you first connected start out as read.
 - Search in the list, by a chat's name, by anyone in it, or by number.
+- Chats from numbers and addresses that are not in the Mac's address book (verification codes, delivery notices,
+  strangers) wait behind a last row, **Unknown senders**, so the main list is the people you know. Nothing is hidden
+  or deleted, and search still finds them.
+- Pin a chat with the star at the top of its thread. Pinned chats stay at the top of the list. Pins are kept on
+  the phone only.
+- Play voice messages you receive: tap the play button in the thread. The phone fetches the sound from the server
+  the first time. A sound the phone cannot play says so.
 - Reading threads, one-to-one and group, with older history loading as you scroll up.
 - Laid out like the stock Phone and Messaging screens: the same row sizes, text sizes, stamps and scrollbar, and
   an unnamed group titled by its members' initials, for example "PA, JT". The sizes were measured from a real
