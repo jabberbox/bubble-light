@@ -8,10 +8,10 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
@@ -23,7 +23,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewModelScope
 import com.thelightphone.sdk.InitialScreen
 import com.thelightphone.sdk.LightViewModel
@@ -31,6 +30,7 @@ import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.ui.LightBarButton
 import com.thelightphone.sdk.ui.LightBottomBar
 import com.thelightphone.sdk.ui.LightIcons
+import com.thelightphone.sdk.ui.LightLazyScrollView
 import com.thelightphone.sdk.ui.LightText
 import com.thelightphone.sdk.ui.LightTextVariant
 import com.thelightphone.sdk.ui.LightThemeTokens
@@ -47,6 +47,7 @@ import java.io.IOException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -58,7 +59,61 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
-data class ChatRow(val id: String, val name: String, val unread: Boolean)
+/** [haystack] is every name and address of the chat in lower case, which is what a search looks through. */
+data class ChatRow(val id: String, val name: String, val unread: Boolean, val haystack: String = "")
+
+/** Height of a row in the chat list, in grid units: the stock list's 150 pixel rows and 10 pixel gaps. */
+private const val ROW_UNITS = 4f
+
+/** The rows of the chat list for a session, newest first. */
+internal fun chatRows(s: Session): Flow<List<ChatRow>> = combine(s.repo.conversations(), s.repo.contacts) { conversations, contacts ->
+    conversations.map { conv ->
+        val name = contacts.title(conv.displayName, conv.participants)
+        val everyone = conv.participants.flatMap { listOf(contacts.fullName(it), it) }
+        ChatRow(conv.guid, name, conv.unread, (listOf(conv.displayName, name) + everyone).joinToString(" ").lowercase())
+    }
+}
+
+/**
+ * The stock list: rows four grid units tall, which lets the SDK's list draw its scrollbar the way the stock one is.
+ * No item keys on purpose: with keys the list holds the first visible row in place, so a chat that just became the
+ * newest would appear above the top edge instead of at it.
+ */
+@Composable
+internal fun ChatRowList(rows: List<ChatRow>, modifier: Modifier = Modifier, onOpen: (String) -> Unit) {
+    LightLazyScrollView(modifier.fillMaxWidth(), uniformItemHeightGridUnits = ROW_UNITS) {
+        items(rows) { chat -> ChatRowItem(chat) { onOpen(chat.id) } }
+    }
+}
+
+@Composable
+private fun ChatRowItem(chat: ChatRow, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(ROW_UNITS.gridUnitsAsDp())
+            .lightClickable(onClick = onClick)
+            .padding(top = 0.25f.gridUnitsAsDp()),
+    ) {
+        // The stock rows keep a 16 pixel column for the unread dot in front of the name at 80 pixels. Always laid
+        // out so names never shift when read state changes.
+        Box(
+            Modifier
+                .padding(start = 0.8f.gridUnitsAsDp(), top = 0.925f.gridUnitsAsDp())
+                .size(0.4f.gridUnitsAsDp())
+                .clip(CircleShape)
+                .background(if (chat.unread) LightThemeTokens.colors.content else Color.Transparent),
+        )
+        Spacer(Modifier.width(0.8f.gridUnitsAsDp()))
+        StockText(
+            text = chat.name,
+            style = StockType.Name,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+    }
+}
 
 data class LoginUi(val busy: Boolean = false, val error: String? = null)
 
@@ -70,13 +125,7 @@ class ChatListViewModel(private val graph: BubbleGraph) : LightViewModel<Unit>()
     val session: StateFlow<Session?> = graph.session
 
     val rows: StateFlow<List<ChatRow>> = graph.session.flatMapLatest { s ->
-        if (s == null) {
-            flowOf(emptyList())
-        } else {
-            combine(s.repo.conversations(), s.repo.contacts) { conversations, contacts ->
-                conversations.map { ChatRow(it.guid, contacts.title(it.displayName, it.participants), it.unread) }
-            }
-        }
+        if (s == null) flowOf(emptyList()) else chatRows(s)
     }.flowOn(Dispatchers.Default).stateIn(viewModelScope, whileVisible, emptyList())
 
     /** How far a full download has got, while one runs, from the first sync or from a resync. */
@@ -211,18 +260,19 @@ class ChatListScreen(sealedActivity: SealedLightActivity) : BubbleScreen<Unit, C
         val status by viewModel.status.collectAsState()
         val notice by viewModel.notice.collectAsState()
         val progress by viewModel.progress.collectAsState()
-        LightTopBar(center = LightTopBarCenter.Text("Bubble Light"), modifier = Modifier.padding(bottom = 1f.gridUnitsAsDp()))
+        // The stock list has no title bar, only the same height of empty space above the first row. A sync or a
+        // problem, when there is one, is shown in that space.
         val line = notice ?: if (status == SyncStatus.Offline) "Offline, will retry" else null
         val running = progress
-        if (running != null) {
-            SyncProgressView(running, Modifier.padding(horizontal = 1f.gridUnitsAsDp(), vertical = 0.5f.gridUnitsAsDp()))
-        } else if (line != null) {
-            LightText(
-                text = line,
-                variant = LightTextVariant.Fine,
-                lighten = true,
-                modifier = Modifier.padding(horizontal = 1f.gridUnitsAsDp()),
-            )
+        Box(
+            Modifier.fillMaxWidth().height(3f.gridUnitsAsDp()).padding(horizontal = 2f.gridUnitsAsDp()),
+            contentAlignment = Alignment.BottomStart,
+        ) {
+            if (running != null) {
+                SyncProgressView(running, Modifier.padding(bottom = 0.25f.gridUnitsAsDp()))
+            } else if (line != null) {
+                LightText(text = line, variant = LightTextVariant.Fine, lighten = true, modifier = Modifier.padding(bottom = 0.25f.gridUnitsAsDp()))
+            }
         }
         if (rows.isEmpty()) {
             Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
@@ -233,49 +283,26 @@ class ChatListScreen(sealedActivity: SealedLightActivity) : BubbleScreen<Unit, C
                 )
             }
         } else {
-            // No item keys on purpose: with keys the list holds the first visible row in place, so a chat that just
-            // became the newest would appear above the top edge instead of at it.
-            LazyColumn(Modifier.weight(1f).fillMaxWidth()) {
-                items(rows) { chat -> ChatRowItem(chat) { openThread(chat.id) } }
-            }
+            ChatRowList(rows, Modifier.weight(1f), onOpen = ::openThread)
         }
         LightBottomBar(
             items = listOf(
                 LightBarButton.LightIcon(icon = LightIcons.SETTINGS, onClick = ::openSettings),
+                LightBarButton.LightIcon(icon = LightIcons.SEARCH, onClick = ::search),
                 LightBarButton.LightIcon(icon = LightIcons.COMPOSE_MESSAGE, onClick = ::newMessage),
             ),
         )
     }
 
-    @Composable
-    private fun ChatRowItem(chat: ChatRow, onClick: () -> Unit) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .lightClickable(onClick = onClick)
-                .padding(horizontal = 1f.gridUnitsAsDp(), vertical = 0.75f.gridUnitsAsDp()),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            // Always laid out so names never shift when read state changes.
-            Box(
-                Modifier
-                    .size(8.dp)
-                    .clip(CircleShape)
-                    .background(if (chat.unread) LightThemeTokens.colors.content else Color.Transparent),
-            )
-            Spacer(Modifier.width(0.75f.gridUnitsAsDp()))
-            LightText(
-                text = chat.name,
-                variant = LightTextVariant.Copy,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
-            )
-        }
-    }
-
     private fun openThread(guid: String) {
         navigateTo({ ThreadScreen(it, guid) })
+    }
+
+    /** Asks for words with the Light keyboard, as the stock Phone app does, then lists the chats that match. */
+    private fun search() {
+        navigateTo({ TextEntryScreen(it, title = "Search chats", submitLabel = "SEARCH", submitIcon = LightIcons.SEARCH) }) { words ->
+            navigateTo({ ChatSearchScreen(it, words.trim()) }) { guid -> openThread(guid) }
+        }
     }
 
     private fun openSettings() {

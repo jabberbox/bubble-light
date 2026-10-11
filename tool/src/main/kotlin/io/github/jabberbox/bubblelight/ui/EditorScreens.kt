@@ -6,6 +6,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.rememberKeyboardOptions
+import com.thelightphone.sdk.ui.LightIconConfiguration
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightTextInputEditor
 
@@ -17,6 +18,7 @@ class TextEntryScreen(
     sealedActivity: SealedLightActivity,
     private val title: String,
     private val submitLabel: String,
+    private val submitIcon: LightIconConfiguration? = null,
 ) : BubbleSimpleScreen<String>(sealedActivity) {
     @Composable
     override fun Body() {
@@ -30,6 +32,7 @@ class TextEntryScreen(
                 onBack = { goBack() },
                 keyboardOptionsFlow = keyboardOptions,
                 submitLabel = submitLabel,
+                submitIcon = submitIcon,
                 singleLine = true,
                 modifier = Modifier.fillMaxSize(),
             )

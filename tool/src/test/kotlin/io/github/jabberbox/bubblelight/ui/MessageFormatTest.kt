@@ -49,9 +49,12 @@ class MessageFormatTest {
     }
 
     @Test
-    fun inAGroupTheSenderNameLeadsTheStampForOthersOnly() {
-        assertEquals("Chris  T5", MessageFormat.toUi(message(), ctx(group = true), time)!!.time)
-        assertEquals("T5", MessageFormat.toUi(message(mine = true), ctx(group = true), time)!!.time)
+    fun inAGroupTheFullSenderNameGetsItsOwnLineForOthersOnly() {
+        val theirs = MessageFormat.toUi(message(), ctx(group = true), time)!!
+        assertEquals("Chris Campise", theirs.sender)
+        assertEquals("T5", theirs.time)
+        assertNull(MessageFormat.toUi(message(mine = true), ctx(group = true), time)!!.sender)
+        assertNull(MessageFormat.toUi(message(), ctx(group = false), time)!!.sender)
     }
 
     @Test
@@ -97,7 +100,7 @@ class MessageFormatTest {
         assertEquals(1, sending.photos.size)
         assertTrue(sending.dim)
         val failed = MessageFormat.toUi(message(text = "", mine = true, attachments = photo, state = MessageState.FAILED), ctx(), time)!!
-        assertEquals("(not sent, tap to retry)", failed.text)
+        assertEquals("FAILED TO SEND", failed.time)
         assertTrue(failed.failed)
         // A plain text message that is still sending needs no note.
         assertEquals("hi", MessageFormat.toUi(message(mine = true, state = MessageState.SENDING), ctx(), time)!!.text)
@@ -107,14 +110,16 @@ class MessageFormatTest {
     fun aFailedSendCanBeRetried() {
         val ui = MessageFormat.toUi(message(mine = true, state = MessageState.FAILED), ctx(), time)!!
         assertTrue(ui.failed)
-        assertEquals("hi (not sent, tap to retry)", ui.text)
+        assertEquals("FAILED TO SEND", ui.time)
+        assertEquals("hi", ui.text)
     }
 
     @Test
     fun aMessageTheServerCouldNotDeliverSaysSo() {
         val ui = MessageFormat.toUi(message(mine = true, error = 22), ctx(), time)!!
         assertTrue(ui.failed)
-        assertEquals("hi (not delivered, tap to retry)", ui.text)
+        assertEquals("NOT DELIVERED", ui.time)
+        assertEquals("hi", ui.text)
     }
 
     @Test
@@ -145,9 +150,9 @@ class MessageFormatTest {
     }
 
     @Test
-    fun stampsMatchMollyLight() {
+    fun stampsMatchTheStockApp() {
         val fmt = MessageFormat.formatter(java.util.Locale.US)
         val ts = java.util.GregorianCalendar(2026, java.util.Calendar.JULY, 18, 20, 22).timeInMillis
-        assertEquals("Jul 18 8:22PM", fmt(ts))
+        assertEquals("Jul 18 8:22 PM", fmt(ts))
     }
 }

@@ -4,7 +4,11 @@ import android.util.Log
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -185,6 +189,14 @@ class ThreadViewModel(private val graph: BubbleGraph, private val chatGuid: Stri
     }
 }
 
+// Measured from the stock thread, in design pixels (2.25 screen pixels each on the LP3). The stock messages repeat every
+// 179 pixels, which here is the 108 pixel stamp-and-text block plus this gap, and a stamp sits 5 pixels above its text.
+private const val MESSAGE_GAP_DESIGN_PX = 31.5f
+private const val STAMP_GAP_DESIGN_PX = 2.2f
+
+// The stock group thread puts the stamp 50 pixels under the sender's name, which two boxes of this size already take up.
+private const val SENDER_GAP_DESIGN_PX = 0.4f
+
 class ThreadScreen(
     sealedActivity: SealedLightActivity,
     private val chatGuid: String,
@@ -220,15 +232,20 @@ class ThreadScreen(
                 center = LightTopBarCenter.Text(title),
                 modifier = Modifier.padding(bottom = 1f.gridUnitsAsDp()),
             )
-            // Messages arrive newest first; the reversed layout puts index 0 at the bottom, with older history above.
-            LazyColumn(
-                state = listState,
-                reverseLayout = true,
-                modifier = Modifier.weight(1f).fillMaxWidth(),
-                contentPadding = PaddingValues(horizontal = 1f.gridUnitsAsDp(), vertical = 0.5f.gridUnitsAsDp()),
-                verticalArrangement = Arrangement.spacedBy(1f.gridUnitsAsDp()),
-            ) {
-                items(messages, key = { it.id }) { m -> MessageItem(m) }
+            // The stock thread starts one grid unit under the top bar and ends one above the bottom bar, with its
+            // text 80 pixels in from the left and a scrollbar in the gutter on the right.
+            Row(Modifier.weight(1f).fillMaxWidth().padding(bottom = 1f.gridUnitsAsDp())) {
+                // Messages arrive newest first; the reversed layout puts index 0 at the bottom, with older history above.
+                LazyColumn(
+                    state = listState,
+                    reverseLayout = true,
+                    modifier = Modifier.weight(1f).fillMaxHeight(),
+                    contentPadding = PaddingValues(start = 2f.gridUnitsAsDp()),
+                    verticalArrangement = Arrangement.spacedBy(MESSAGE_GAP_DESIGN_PX.stockDp()),
+                ) {
+                    items(messages, key = { it.id }) { m -> MessageItem(m) }
+                }
+                StockScrollbar(listState, fromEnd = true)
             }
             LightBottomBar(
                 items = listOf(
@@ -247,9 +264,9 @@ class ThreadScreen(
     @Composable
     private fun MessageItem(m: UiMessage) {
         if (m.event) {
-            LightText(
+            StockText(
                 text = m.text,
-                variant = LightTextVariant.Fine,
+                style = StockType.Stamp,
                 lighten = true,
                 align = TextAlign.Center,
                 modifier = Modifier.fillMaxWidth(),
@@ -264,18 +281,24 @@ class ThreadScreen(
                 .let { if (m.failed) it.lightClickable { viewModel.retry(m.id) } else it },
             horizontalAlignment = if (m.mine) Alignment.End else Alignment.Start,
         ) {
-            LightText(text = m.time, variant = LightTextVariant.Fine, lighten = true, align = end, modifier = Modifier.fillMaxWidth())
+            // In a group the sender's name sits on its own line above the stamp, in the same small type.
+            m.sender?.let {
+                StockText(text = it, style = StockType.Stamp, align = end, modifier = Modifier.fillMaxWidth())
+                Spacer(Modifier.height(SENDER_GAP_DESIGN_PX.stockDp()))
+            }
+            StockText(text = m.time, style = StockType.Stamp, align = end, modifier = Modifier.fillMaxWidth())
+            Spacer(Modifier.height(STAMP_GAP_DESIGN_PX.stockDp()))
             if (loader != null) {
                 m.photos.forEach { photo -> PhotoBlock(photo, m.mine, loader) { openPhoto(photo) } }
             }
             if (m.text.isNotEmpty()) {
-                LightText(text = m.text, variant = LightTextVariant.Copy, lighten = m.dim, align = end, modifier = Modifier.fillMaxWidth())
+                StockText(text = m.text, style = StockType.Message, lighten = m.dim, align = end, modifier = Modifier.fillMaxWidth())
             }
             m.reactions?.let {
-                LightText(text = it, variant = LightTextVariant.Fine, lighten = true, align = end, modifier = Modifier.fillMaxWidth())
+                StockText(text = it, style = StockType.Stamp, lighten = true, align = end, modifier = Modifier.fillMaxWidth())
             }
             m.status?.let {
-                LightText(text = it, variant = LightTextVariant.Fine, lighten = true, align = TextAlign.End, modifier = Modifier.fillMaxWidth())
+                StockText(text = it, style = StockType.Stamp, lighten = true, align = TextAlign.End, modifier = Modifier.fillMaxWidth())
             }
         }
     }

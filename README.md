@@ -14,7 +14,8 @@ no analytics, no third-party servers: the phone talks only to your server.
 |---|---|---|
 | ![Group](screenshots/group.png) | ![New message](screenshots/new-message.png) | ![Settings](screenshots/settings.png) |
 
-The screenshots use made-up contacts from the fake server in `tools/`.
+The screenshots use made-up contacts from the fake server in `tools/`, and come from the emulator, which has a
+different font from the phone. On a Light Phone III the text is set in Akkurat, like the rest of LightOS.
 
 ## What you need
 
@@ -64,7 +65,11 @@ cached on the phone are cleared and downloaded again from the new server.
 
 - Conversation list of every chat the server has, with unread dots and contact names taken from the Mac's
   address book. Chats that were already quiet when you first connected start out as read.
+- Search in the list, by a chat's name, by anyone in it, or by number.
 - Reading threads, one-to-one and group, with older history loading as you scroll up.
+- Laid out like the stock Phone and Messaging screens: the same row sizes, text sizes, stamps and scrollbar, and
+  an unnamed group titled by its members' initials, for example "PA, JT". The sizes were measured from a real
+  Light Phone III.
 - Writing and sending messages, starting new conversations by name, number or email.
 - Photos in messages, with a full-screen viewer (pinch to zoom, double tap to reset).
 - Tapbacks shown as a line under the message they belong to.

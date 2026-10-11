@@ -25,10 +25,13 @@ class ContactsTest {
     }
 
     @Test
-    fun titlesFollowIMessage() {
+    fun titlesFollowTheStockApp() {
         val chris = listOf("+16082646591")
         assertEquals("Chris Campise", contacts.title("", chris))
-        assertEquals("Chris, Matt", contacts.title("", listOf("+16082646591", "+16082138014")))
+        assertEquals("CC, MS", contacts.title("", listOf("+16082646591", "+16082138014")))
+        // A single-word name gives one letter, and a number outside the address book stays as it is.
+        val oneWord = Contacts.from(listOf("+16081111111" to "Tee", "+16082222222" to "Pablo van der Berg"))
+        assertEquals("T, PB, +16085550000", oneWord.title("", listOf("+16081111111", "+16082222222", "+16085550000")))
         assertEquals("Roger Dodger Fans", contacts.title("Roger Dodger Fans", listOf("+16082646591", "+16082138014")))
         assertEquals("+16085550000", contacts.title("", listOf("+16085550000")))
         assertEquals("Unknown", contacts.title("", emptyList()))
@@ -38,6 +41,8 @@ class ContactsTest {
     fun theSenderLabelIsAFirstNameOrTheRawAddress() {
         assertEquals("Chris", contacts.sender("+16082646591"))
         assertEquals("+16085550000", contacts.sender("+16085550000"))
+        assertEquals("Chris Campise", contacts.fullName("+16082646591"))
+        assertEquals("+16085550000", contacts.fullName("+16085550000"))
     }
 
     @Test

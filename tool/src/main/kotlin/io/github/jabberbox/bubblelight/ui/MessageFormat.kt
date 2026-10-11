@@ -13,11 +13,13 @@ import java.util.Locale
 /** How one message is shown in a thread. */
 data class UiMessage(
     val id: String,
-    /** The stamp above the message, with the sender's name in front in a group. */
+    /** The stamp above the message. */
     val time: String,
+    /** Who sent it, in full, on a line of its own above the stamp, for a message from someone else in a group. */
+    val sender: String? = null,
     val text: String,
     val mine: Boolean,
-    /** Shown in the secondary gray: still sending, or not delivered. */
+    /** Shown in the secondary gray while still sending. A failed message stays white, as in the stock app. */
     val dim: Boolean,
     /** Tapping it sends it again. */
     val failed: Boolean,
@@ -74,20 +76,21 @@ object MessageFormat {
         if (lines.isEmpty() && photos.isEmpty()) return null
         val failed = m.state == MessageState.FAILED || m.error != 0
         val body = lines.joinToString("\n")
-        val note = when {
-            m.state == MessageState.FAILED -> "not sent, tap to retry"
-            m.error != 0 -> "not delivered, tap to retry"
-            // A photo takes a while to upload and the picture alone gives no sign it is still going.
-            m.state == MessageState.SENDING && photos.isNotEmpty() -> "sending..."
-            else -> null
-        }
+        // A photo takes a while to upload and the picture alone gives no sign it is still going.
+        val note = if (m.state == MessageState.SENDING && photos.isNotEmpty()) "sending..." else null
         val time = formatTime(m.dateCreated)
         return UiMessage(
             id = m.guid,
-            time = if (!m.fromMe && ctx.isGroup && sender != null) "$sender  $time" else time,
+            // A message that did not go says so where the stamp would be, as the stock app does. Tapping it retries.
+            time = when {
+                m.state == MessageState.FAILED -> "FAILED TO SEND"
+                m.error != 0 -> "NOT DELIVERED"
+                else -> time
+            },
+            sender = if (!m.fromMe && ctx.isGroup) m.sender?.let(ctx.contacts::fullName) else null,
             text = listOfNotNull(body.ifEmpty { null }, note?.let { "($it)" }).joinToString(" "),
             mine = m.fromMe,
-            dim = m.state != MessageState.OK || m.error != 0,
+            dim = m.state == MessageState.SENDING,
             failed = failed,
             photos = photos,
             reactions = ctx.tapbacks[m.guid]?.let { Tapbacks.summary(it, ctx.isGroup, ctx.contacts::sender) }?.ifEmpty { null },
@@ -95,9 +98,9 @@ object MessageFormat {
         )
     }
 
-    /** Matches Molly Light's stamps, for example "Jul 18 8:22PM". */
+    /** Matches the stock app's stamps, for example "Jul 18 8:22 PM", where the space is a narrow no-break space. */
     fun formatter(locale: Locale = Locale.getDefault()): (Long) -> String {
-        val format = SimpleDateFormat("MMM d h:mma", locale)
+        val format = SimpleDateFormat("MMM d h:mm a", locale)
         return { ts -> format.format(Date(ts)) }
     }
 }

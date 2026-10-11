@@ -16,18 +16,31 @@ class Contacts(private val byKey: Map<String, Contact> = emptyMap()) {
     /** Full name for an address, or null if it is not in the address book. */
     fun name(address: String): String? = byKey[key(address)]?.name
 
-    /** Sender label inside a thread; the first name keeps group rows short. */
+    /** Short label for a person in a line of text, such as a tapback summary: the first name. */
     fun sender(address: String): String = label(address, firstNameOnly = true)
 
+    /** The full name, or the raw address when it is not in the address book. */
+    fun fullName(address: String): String = label(address, firstNameOnly = false)
+
     /**
-     * A conversation's title as iMessage shows it: the group's own name if it has one, the full name for a
-     * one-to-one chat, first names for an unnamed group.
+     * A conversation's title as the stock Phone app shows it: the group's own name if it has one, the full name
+     * for a one-to-one chat, and the members' initials for an unnamed group, for example "PA, JT".
      */
     fun title(displayName: String, participants: List<String>): String = when {
         displayName.isNotBlank() -> displayName
         participants.isEmpty() -> "Unknown"
         participants.size == 1 -> label(participants[0], firstNameOnly = false)
-        else -> participants.joinToString(", ") { label(it, firstNameOnly = true) }
+        else -> participants.joinToString(", ") { initials(it) }
+    }
+
+    /** First letters of the first and last word of a name, or the first letter of a single word. */
+    private fun initials(address: String): String {
+        val words = (name(address) ?: return address).trim().split(Regex("\\s+")).filter { it.isNotEmpty() }
+        return when (words.size) {
+            0 -> address
+            1 -> words[0].take(1).uppercase()
+            else -> words.first().take(1).uppercase() + words.last().take(1).uppercase()
+        }
     }
 
     fun entries(): List<ContactEntity> = byKey.map { ContactEntity(it.key, it.value.name, it.value.address) }
