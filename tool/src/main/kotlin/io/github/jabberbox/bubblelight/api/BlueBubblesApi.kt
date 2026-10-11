@@ -51,25 +51,23 @@ class BlueBubblesApi(baseUrl: String, private val password: String) {
     }
 
     /**
-     * `POST /chat/query`: every chat the server has, most recently active first, each with its participants and
-     * newest message. A sweep of recent messages only reaches the chats that are busy right now, so this is how the
-     * quieter ones are found. Pages of [limit] are read until one comes back short.
+     * `POST /chat/query`: one page of the chats the server has, most recently active first, each with its
+     * participants and newest message. A sweep of recent messages only reaches the chats that are busy right now,
+     * so this is how the quieter ones are found. The caller pages through with [offset] until a page comes back short.
      */
-    fun chatList(limit: Int = 1000): List<ChatListEntry> {
-        val out = ArrayList<ChatListEntry>()
-        var offset = 0
-        while (offset < MAX_CHATS) {
-            val body = JSONObject()
-                .put("limit", limit)
-                .put("offset", offset)
-                .put("with", JSONArray().put("participants").put("lastmessage"))
-                .put("sort", "lastmessage")
-            val page = BlueBubblesJson.parseChatList(requestChecked("POST", "/api/v1/chat/query", body, what = "chats"))
-            out += page
-            if (page.size < limit) break
-            offset += page.size
-        }
-        return out
+    fun chatPage(limit: Int, offset: Int): List<ChatListEntry> {
+        val body = JSONObject()
+            .put("limit", limit)
+            .put("offset", offset)
+            .put("with", JSONArray().put("participants").put("lastmessage"))
+            .put("sort", "lastmessage")
+        return BlueBubblesJson.parseChatList(requestChecked("POST", "/api/v1/chat/query", body, what = "chats"))
+    }
+
+    /** `GET /chat/count`: how many chats the server has, which lets a download say how far along it is. Null if unreported. */
+    fun chatCount(): Int? {
+        val data = dataObject(requestChecked("GET", "/api/v1/chat/count", null, what = "chat count"))
+        return data?.optInt("total", -1)?.takeIf { it >= 0 }
     }
 
     /** `GET /chat/:guid/message`: one chat's messages older than [before], newest first. */
@@ -143,10 +141,6 @@ class BlueBubblesApi(baseUrl: String, private val password: String) {
     }
 
     private fun enc(s: String): String = URLEncoder.encode(s, "UTF-8")
-
-    private companion object {
-        const val MAX_CHATS = 20_000
-    }
 
     private fun requestChecked(method: String, path: String, body: JSONObject?, what: String, extraQuery: String? = null): String {
         val (code, text) = request(method, path, body, extraQuery)

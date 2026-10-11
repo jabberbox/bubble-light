@@ -24,13 +24,20 @@ import com.thelightphone.sdk.ui.lightClickable
 import io.github.jabberbox.bubblelight.BubbleGraph
 import io.github.jabberbox.bubblelight.api.ApiException
 import io.github.jabberbox.bubblelight.data.ServerSetup
+import io.github.jabberbox.bubblelight.data.SyncProgress
 import java.io.IOException
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class SettingsViewModel(private val graph: BubbleGraph) : LightViewModel<Unit>() {
     private val _server = MutableStateFlow(host())
     val server: StateFlow<String> = _server.asStateFlow()
@@ -49,6 +56,35 @@ class SettingsViewModel(private val graph: BubbleGraph) : LightViewModel<Unit>()
 
     /** What the last Change server attempt did, shown under the server line. */
     val status: StateFlow<String?> = _status.asStateFlow()
+
+    /** How far the download has got, while one runs. */
+    val progress: StateFlow<SyncProgress?> = graph.session
+        .flatMapLatest { s -> s?.repo?.progress ?: flowOf<SyncProgress?>(null) }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    private var resyncing = false
+    private var sawProgress = false
+
+    init {
+        viewModelScope.launch { progress.collect { onProgress(it) } }
+    }
+
+    /** Once a resync has been seen running and then stops, says whether it finished or fell short. */
+    private fun onProgress(p: SyncProgress?) {
+        if (!resyncing) return
+        if (p != null) {
+            sawProgress = true
+            return
+        }
+        if (!sawProgress) return
+        resyncing = false
+        sawProgress = false
+        _status.value = if (graph.session.value?.repo?.lastSyncOk?.value == true) {
+            "Resync complete."
+        } else {
+            "Resync did not finish. Check your connection and try again."
+        }
+    }
 
     private fun host(): String = graph.store.baseUrl?.substringAfter("://")?.substringBefore('/').orEmpty()
 
@@ -83,13 +119,17 @@ class SettingsViewModel(private val graph: BubbleGraph) : LightViewModel<Unit>()
 
     /** Wipes the local copy and downloads every chat again. The sign-in is kept. */
     fun resync() {
-        _status.value = "Resyncing. Your chats will fill back in over the next minute."
+        if (resyncing) return
+        resyncing = true
+        sawProgress = false
+        _status.value = "Resyncing..."
         viewModelScope.launch {
             try {
                 graph.resync()
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
+                resyncing = false
                 _status.value = "Could not resync (${e::class.simpleName})."
             }
         }
@@ -121,6 +161,7 @@ class SettingsScreen(sealedActivity: SealedLightActivity) : BubbleScreen<Unit, S
         val confirm by viewModel.confirmSignOut.collectAsState()
         val server by viewModel.server.collectAsState()
         val status by viewModel.status.collectAsState()
+        val progress by viewModel.progress.collectAsState()
         BubbleTheme {
             LightTopBar(
                 leftButton = LightBarButton.LightIcon(icon = LightIcons.BACK, onClick = { goBack() }),
@@ -179,12 +220,17 @@ class SettingsScreen(sealedActivity: SealedLightActivity) : BubbleScreen<Unit, S
                     lighten = true,
                     modifier = Modifier.padding(top = 1f.gridUnitsAsDp()),
                 )
-                status?.let {
-                    LightText(
-                        text = it,
-                        variant = LightTextVariant.Fine,
-                        modifier = Modifier.padding(top = 0.25f.gridUnitsAsDp()),
-                    )
+                val running = progress
+                if (running != null) {
+                    SyncProgressView(running, Modifier.padding(top = 0.5f.gridUnitsAsDp()))
+                } else {
+                    status?.let {
+                        LightText(
+                            text = it,
+                            variant = LightTextVariant.Fine,
+                            modifier = Modifier.padding(top = 0.25f.gridUnitsAsDp()),
+                        )
+                    }
                 }
                 LightText(
                     text = "Messages travel only between this phone and your own server. Ones that arrive while this tool is closed show up when you open it.",

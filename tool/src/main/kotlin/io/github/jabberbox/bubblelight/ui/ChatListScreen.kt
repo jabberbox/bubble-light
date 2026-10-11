@@ -41,6 +41,7 @@ import com.thelightphone.sdk.ui.lightClickable
 import io.github.jabberbox.bubblelight.BubbleGraph
 import io.github.jabberbox.bubblelight.Session
 import io.github.jabberbox.bubblelight.api.ApiException
+import io.github.jabberbox.bubblelight.data.SyncProgress
 import io.github.jabberbox.bubblelight.data.SyncStatus
 import java.io.IOException
 import kotlinx.coroutines.CancellationException
@@ -77,6 +78,11 @@ class ChatListViewModel(private val graph: BubbleGraph) : LightViewModel<Unit>()
             }
         }
     }.flowOn(Dispatchers.Default).stateIn(viewModelScope, whileVisible, emptyList())
+
+    /** How far a full download has got, while one runs, from the first sync or from a resync. */
+    val progress: StateFlow<SyncProgress?> = graph.session.flatMapLatest { s ->
+        s?.repo?.progress ?: flowOf<SyncProgress?>(null)
+    }.stateIn(viewModelScope, whileVisible, null)
 
     val status: StateFlow<SyncStatus> = graph.session.flatMapLatest { s ->
         s?.repo?.status ?: flowOf(SyncStatus.Syncing)
@@ -204,9 +210,13 @@ class ChatListScreen(sealedActivity: SealedLightActivity) : BubbleScreen<Unit, C
         val rows by viewModel.rows.collectAsState()
         val status by viewModel.status.collectAsState()
         val notice by viewModel.notice.collectAsState()
+        val progress by viewModel.progress.collectAsState()
         LightTopBar(center = LightTopBarCenter.Text("Bubble Light"), modifier = Modifier.padding(bottom = 1f.gridUnitsAsDp()))
         val line = notice ?: if (status == SyncStatus.Offline) "Offline, will retry" else null
-        if (line != null) {
+        val running = progress
+        if (running != null) {
+            SyncProgressView(running, Modifier.padding(horizontal = 1f.gridUnitsAsDp(), vertical = 0.5f.gridUnitsAsDp()))
+        } else if (line != null) {
             LightText(
                 text = line,
                 variant = LightTextVariant.Fine,

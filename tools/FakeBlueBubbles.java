@@ -21,7 +21,7 @@ import javax.imageio.ImageIO;
  * From the Android emulator the host is http://10.0.2.2:PORT (debug builds allow plain HTTP for this).
  * Port PORT speaks both plain HTTP and a Socket.IO v4 WebSocket feed (a front door hands upgrades to the feed and
  * pipes everything else to an internal HTTP server on PORT+1).
- * Admin routes (all need the password): /admin/incoming?text=..&from=..  /admin/read?chat=..  /admin/drop  /admin/mute  /admin/account?name=..  /admin/sweepcap?n=..
+ * Admin routes (all need the password): /admin/incoming?text=..&from=..  /admin/read?chat=..  /admin/drop  /admin/mute  /admin/account?name=..  /admin/sweepcap?n=..  /admin/bulk?n=..  /admin/latency?ms=..
  */
 public class FakeBlueBubbles {
     record Chat(String guid, String name, boolean group, List<String> people) {}
@@ -178,8 +178,12 @@ public class FakeBlueBubbles {
 
     /** Uploads are made to take a couple of seconds so the app's sending state can be seen; the sleep is outside the lock. */
     static void handle(HttpExchange ex) throws IOException {
-        if (ex.getRequestURI().getPath().equals("/api/v1/message/attachment")) {
+        String requestPath = ex.getRequestURI().getPath();
+        if (requestPath.equals("/api/v1/message/attachment")) {
             try { Thread.sleep(2500); } catch (InterruptedException ignored) { }
+        }
+        if (latencyMs > 0 && (requestPath.equals("/api/v1/chat/query") || requestPath.equals("/api/v1/message/query"))) {
+            try { Thread.sleep(latencyMs); } catch (InterruptedException ignored) { }
         }
         handleLocked(ex);
     }
@@ -201,6 +205,10 @@ public class FakeBlueBubbles {
             admin(ex, path, q);
         } else if (path.equals("/api/v1/server/info")) {
             json(ex, 200, "{\"status\":200,\"data\":{\"server_version\":\"fake\",\"private_api\":false,\"helper_connected\":false,\"detected_icloud\":" + q(account) + "}}");
+        } else if (path.equals("/api/v1/chat/count")) {
+            java.util.Set<String> guids = new java.util.HashSet<>();
+            for (Msg m : messages) guids.add(m.chat.guid);
+            json(ex, 200, "{\"status\":200,\"data\":{\"total\":" + guids.size() + "}}");
         } else if (path.equals("/api/v1/chat/query")) {
             int limit = (int) num(body, "limit", 1000);
             int offset = (int) num(body, "offset", 0);
@@ -312,6 +320,8 @@ public class FakeBlueBubbles {
     static volatile boolean muted = false;
     /** The most messages a message query returns, to reproduce chats a sweep of the newest messages never reaches. */
     static volatile int sweepCap = Integer.MAX_VALUE;
+    /** A pause added to every chat or message query, so a download is slow enough to watch its progress bar. */
+    static volatile int latencyMs = 0;
     static volatile String account = "fake@icloud.com";
 
     static class WsClient {
@@ -487,6 +497,17 @@ public class FakeBlueBubbles {
             synchronized (clients) { snapshot = new ArrayList<>(clients); }
             for (WsClient c : snapshot) c.socket.close();
             json(ex, 200, "{\"status\":200}");
+        } else if (path.equals("/admin/bulk")) {
+            int n = Integer.parseInt(q.getOrDefault("n", "100"));
+            for (int i = 1; i <= n; i++) {
+                String address = "+1555030" + String.format("%04d", i);
+                Chat chat = new Chat("iMessage;-;" + address, "", false, List.of(address));
+                add(chat, "Bulk message " + i, 60L * 24 * 70 + i, false, address, false, "");
+            }
+            json(ex, 200, "{\"status\":200,\"added\":" + n + "}");
+        } else if (path.equals("/admin/latency")) {
+            latencyMs = Integer.parseInt(q.getOrDefault("ms", "0"));
+            json(ex, 200, "{\"status\":200,\"latencyMs\":" + latencyMs + "}");
         } else if (path.equals("/admin/sweepcap")) {
             sweepCap = Integer.parseInt(q.getOrDefault("n", "2147483647"));
             json(ex, 200, "{\"status\":200,\"sweepCap\":" + sweepCap + "}");

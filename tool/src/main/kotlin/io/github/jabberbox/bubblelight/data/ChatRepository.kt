@@ -47,6 +47,16 @@ class ChatRepository(
     private val _contacts = MutableStateFlow(Contacts())
     val contacts: StateFlow<Contacts> = _contacts.asStateFlow()
 
+    private val _progress = MutableStateFlow<SyncProgress?>(null)
+
+    /** How far a full download has got, or null when none is running. Routine catch-up syncs are too quick to report. */
+    val progress: StateFlow<SyncProgress?> = _progress.asStateFlow()
+
+    private val _lastSyncOk = MutableStateFlow<Boolean?>(null)
+
+    /** Whether the most recent sync finished, or null before the first one ends. Tells a finished download from a failed one. */
+    val lastSyncOk: StateFlow<Boolean?> = _lastSyncOk.asStateFlow()
+
     val status: Flow<SyncStatus> = combine(syncing, syncFailed, hasSynced, socketUp) { busy, failed, synced, socket ->
         when {
             busy || (!synced && socket != false && !failed) -> SyncStatus.Syncing
@@ -89,14 +99,24 @@ class ChatRepository(
         if (!force && System.currentTimeMillis() - lastSyncAt < MIN_SYNC_GAP_MS) return
         if (!syncMutex.tryLock()) return
         syncing.value = true
+        // A full download (a first sync, or one after a reset) takes long enough to be worth a progress bar.
+        val cursor = store.lastSeenDate
+        val full = cursor <= 0L || !store.chatListImported
         try {
+            if (full) _progress.value = SyncProgress.at(SyncProgress.RECENT_MESSAGES, 0f)
             runCatching { store.updatePrivateApi(withContext(Dispatchers.IO) { api.serverInfo().privateApiReady }) }
-            val cursor = store.lastSeenDate
             val rows = ArrayList<ParsedMessage>()
-            withContext(Dispatchers.IO) {
-                if (cursor <= 0L) {
-                    rows += api.messages(FIRST_SWEEP)
-                } else {
+            if (cursor <= 0L) {
+                var offset = 0
+                while (offset < FIRST_SWEEP) {
+                    val page = withContext(Dispatchers.IO) { api.messages(SWEEP_PAGE, offset) }
+                    rows += page
+                    offset += page.size
+                    if (full) _progress.value = SyncProgress.at(SyncProgress.RECENT_MESSAGES, offset.toFloat() / FIRST_SWEEP)
+                    if (page.size < SWEEP_PAGE) break
+                }
+            } else {
+                withContext(Dispatchers.IO) {
                     var offset = 0
                     while (offset < GAP_MAX) {
                         val page = api.messages(PAGE, offset, after = cursor)
@@ -108,17 +128,27 @@ class ChatRepository(
                 }
             }
             ingest(rows)
-            importChatList()
+            // Those two steps handle their own errors, so a failure there must still count against the whole sync.
+            val chatsOk = importChatList(report = full)
+            var contactsOk = true
+            if (full) {
+                _progress.value = SyncProgress.at(SyncProgress.CONTACTS, 0f)
+                contactsOk = refreshContacts(force = true)
+            }
+            val ok = chatsOk && contactsOk
             hasSynced.value = true
-            syncFailed.value = false
+            syncFailed.value = !ok
             lastSyncAt = System.currentTimeMillis()
-            log("sync: ${rows.size} messages")
+            _lastSyncOk.value = ok
+            log("sync: ${rows.size} messages" + if (ok) "" else ", incomplete")
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             syncFailed.value = true
+            _lastSyncOk.value = false
             log("sync failed: ${e::class.simpleName} ${e.message}")
         } finally {
+            _progress.value = null
             syncing.value = false
             syncMutex.unlock()
         }
@@ -130,23 +160,43 @@ class ChatRepository(
      * message, which is stored so the chat can be listed and ordered. A chat found here for the first time is old news,
      * so it starts out read rather than turning every quiet conversation into an unread one.
      *
-     * A failure leaves the import to be tried again on the next sync and does not fail the sync itself.
+     * A failure leaves the import to be tried again on the next sync. Returns whether the chat list is now imported,
+     * so the sync can report that it did not finish.
      */
-    private suspend fun importChatList() {
-        if (store.chatListImported) return
-        try {
-            val entries = withContext(Dispatchers.IO) { api.chatList() }
+    private suspend fun importChatList(report: Boolean): Boolean {
+        if (store.chatListImported) return true
+        return try {
+            // The server says how many chats it has, so the pages read can be shown as a share of the whole.
+            val total = runCatching { withContext(Dispatchers.IO) { api.chatCount() } }.getOrNull()?.takeIf { it > 0 }
+            if (report) _progress.value = SyncProgress.at(SyncProgress.CHATS, 0f)
             val known = db.chats().all().mapTo(HashSet()) { it.guid }
-            val rows = entries.mapNotNull { entry -> entry.last?.let { ParsedMessage(it, entry.info) } }
-            ingest(rows, advanceCursor = false)
-            val fresh = rows.map { it.message.chatGuid }.filter { it !in known }.distinct()
-            fresh.chunked(500).forEach { db.chats().setAllLocalRead(it) }
+            var offset = 0
+            var found = 0
+            var fresh = 0
+            while (offset < MAX_CHATS) {
+                val page = withContext(Dispatchers.IO) { api.chatPage(CHAT_PAGE, offset) }
+                // Each page is stored as it arrives, so the list fills in while the bar moves.
+                val rows = page.mapNotNull { entry -> entry.last?.let { ParsedMessage(it, entry.info) } }
+                ingest(rows, advanceCursor = false)
+                val newGuids = rows.map { it.message.chatGuid }.filter { it !in known }.distinct()
+                newGuids.chunked(500).forEach { db.chats().setAllLocalRead(it) }
+                fresh += newGuids.size
+                found += page.size
+                offset += page.size
+                if (report) {
+                    val within = if (total != null) found.toFloat() / total else 0.5f
+                    _progress.value = SyncProgress.at(SyncProgress.CHATS, within)
+                }
+                if (page.size < CHAT_PAGE) break
+            }
             store.markChatListImported()
-            log("chat list: ${entries.size} chats, ${fresh.size} new")
+            log("chat list: $found chats, $fresh new")
+            true
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             log("chat list failed: ${e::class.simpleName} ${e.message}")
+            false
         }
     }
 
@@ -308,9 +358,10 @@ class ChatRepository(
 
     // ---- contacts ----------------------------------------------------------
 
-    suspend fun refreshContacts(force: Boolean = false) {
-        if (!force && System.currentTimeMillis() - store.lastContactsSync < CONTACTS_TTL_MS) return
-        try {
+    /** Reloads the address book unless it was loaded recently. Returns false only when a reload was needed and failed. */
+    suspend fun refreshContacts(force: Boolean = false): Boolean {
+        if (!force && System.currentTimeMillis() - store.lastContactsSync < CONTACTS_TTL_MS) return true
+        return try {
             val entries = withContext(Dispatchers.IO) { api.contacts() }
             val contacts = Contacts.from(entries.map { it.address to it.name })
             db.withTransaction {
@@ -319,10 +370,12 @@ class ChatRepository(
             }
             _contacts.value = contacts
             store.updateLastContactsSync(System.currentTimeMillis())
+            true
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             log("contacts failed: ${e::class.simpleName}")
+            false
         }
     }
 
@@ -331,6 +384,9 @@ class ChatRepository(
 
     private companion object {
         const val FIRST_SWEEP = 1000
+        const val SWEEP_PAGE = 250
+        const val CHAT_PAGE = 100
+        const val MAX_CHATS = 20_000
         const val PAGE = 50
         const val REFRESH = 100
         const val GAP_MAX = 2000

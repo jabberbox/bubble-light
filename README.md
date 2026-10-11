@@ -53,6 +53,8 @@ open Settings, choose **Change server** and scan the QR code again, or pick an a
 
 **Resync** in Settings throws away the copy of your chats kept on the phone and downloads it again from the
 same server. Your sign-in stays. Use it if what the phone shows ever looks different from what the server holds.
+A progress bar with a percentage shows how far the download has got, and Settings says whether it finished. The
+first sync after signing in shows the same bar at the top of the chat list.
 
 **Change server** checks the new details first, so a wrong one changes nothing. If the server reports the same
 Apple account as before, your chats stay as they are. If it reports a different account, or none, the chats
