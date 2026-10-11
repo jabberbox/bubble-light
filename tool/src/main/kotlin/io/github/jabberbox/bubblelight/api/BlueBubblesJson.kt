@@ -94,6 +94,17 @@ object BlueBubblesJson {
         }
     }
 
+    /** The response of `POST /chat/query` made with `participants` and `lastmessage`. Chats with no guid are skipped. */
+    fun parseChatList(response: String): List<ChatListEntry> {
+        val data = JSONObject(response).optJSONArray("data") ?: return emptyList()
+        return (0 until data.length()).mapNotNull { i ->
+            val chat = data.optJSONObject(i) ?: return@mapNotNull null
+            val info = parseChat(chat) ?: return@mapNotNull null
+            val last = chat.optJSONObject("lastMessage")?.let { parseMessage(it, info.guid)?.message }
+            ChatListEntry(info, last)
+        }
+    }
+
     fun parseMessages(response: String, chatGuid: String? = null): List<ParsedMessage> {
         val data = JSONObject(response).optJSONArray("data") ?: JSONArray()
         return (0 until data.length()).mapNotNull { parseMessage(data.getJSONObject(it), chatGuid) }

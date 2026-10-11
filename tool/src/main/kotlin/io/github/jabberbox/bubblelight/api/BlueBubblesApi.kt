@@ -50,6 +50,28 @@ class BlueBubblesApi(baseUrl: String, private val password: String) {
         return BlueBubblesJson.parseMessages(requestChecked("POST", "/api/v1/message/query", body, what = "messages"))
     }
 
+    /**
+     * `POST /chat/query`: every chat the server has, most recently active first, each with its participants and
+     * newest message. A sweep of recent messages only reaches the chats that are busy right now, so this is how the
+     * quieter ones are found. Pages of [limit] are read until one comes back short.
+     */
+    fun chatList(limit: Int = 1000): List<ChatListEntry> {
+        val out = ArrayList<ChatListEntry>()
+        var offset = 0
+        while (offset < MAX_CHATS) {
+            val body = JSONObject()
+                .put("limit", limit)
+                .put("offset", offset)
+                .put("with", JSONArray().put("participants").put("lastmessage"))
+                .put("sort", "lastmessage")
+            val page = BlueBubblesJson.parseChatList(requestChecked("POST", "/api/v1/chat/query", body, what = "chats"))
+            out += page
+            if (page.size < limit) break
+            offset += page.size
+        }
+        return out
+    }
+
     /** `GET /chat/:guid/message`: one chat's messages older than [before], newest first. */
     fun chatMessages(chatGuid: String, limit: Int, before: Long? = null): List<MessageEntity> {
         val query = buildString {
@@ -121,6 +143,10 @@ class BlueBubblesApi(baseUrl: String, private val password: String) {
     }
 
     private fun enc(s: String): String = URLEncoder.encode(s, "UTF-8")
+
+    private companion object {
+        const val MAX_CHATS = 20_000
+    }
 
     private fun requestChecked(method: String, path: String, body: JSONObject?, what: String, extraQuery: String? = null): String {
         val (code, text) = request(method, path, body, extraQuery)

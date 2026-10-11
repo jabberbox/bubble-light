@@ -57,7 +57,8 @@ cached on the phone are cleared and downloaded again from the new server.
 
 ## What works
 
-- Conversation list, with unread dots and contact names taken from the Mac's address book.
+- Conversation list of every chat the server has, with unread dots and contact names taken from the Mac's
+  address book. Chats that were already quiet when you first connected start out as read.
 - Reading threads, one-to-one and group, with older history loading as you scroll up.
 - Writing and sending messages, starting new conversations by name, number or email.
 - Photos in messages, with a full-screen viewer (pinch to zoom, double tap to reset).

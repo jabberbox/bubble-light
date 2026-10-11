@@ -13,6 +13,9 @@ data class ChatInfo(
 /** A message as the server sent it, with the chat it belongs to when the payload carried one. */
 data class ParsedMessage(val message: MessageEntity, val chat: ChatInfo?)
 
+/** A chat as the server's chat list reports it: its details, and its newest message when it has one. */
+data class ChatListEntry(val info: ChatInfo, val last: MessageEntity?)
+
 /**
  * What `GET /server/info` says. [privateApiReady] means tapbacks, read receipts and typing are available.
  * [account] is the Apple account the Mac is signed in to, which tells two addresses of one server apart from two servers.

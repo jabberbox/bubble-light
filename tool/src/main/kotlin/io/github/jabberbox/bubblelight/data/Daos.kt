@@ -53,6 +53,10 @@ interface ChatDao {
     @Query("UPDATE chats SET localReadTs = MAX(localReadTs, :ts) WHERE guid IN (:guids)")
     suspend fun setLocalRead(guids: List<String>, ts: Long)
 
+    /** Treats everything stored so far in these chats as already seen, each up to its own newest message. */
+    @Query("UPDATE chats SET localReadTs = MAX(localReadTs, lastDate) WHERE guid IN (:guids)")
+    suspend fun setAllLocalRead(guids: List<String>)
+
     @Query("UPDATE chats SET historyExhausted = :exhausted WHERE guid = :guid")
     suspend fun setExhausted(guid: String, exhausted: Boolean)
 }

@@ -41,6 +41,11 @@ class Store(private val dataStore: DataStore<Preferences>, private val scope: Co
     var lastContactsSync: Long = 0L
         private set
 
+    /** Whether every chat the server has was imported, rather than only those active in the newest messages. */
+    @Volatile
+    var chatListImported: Boolean = false
+        private set
+
     /** The Apple account the server was signed in to when this phone connected, or null when the server did not say. */
     @Volatile
     var serverAccount: String? = null
@@ -60,6 +65,7 @@ class Store(private val dataStore: DataStore<Preferences>, private val scope: Co
         sendReadReceipts = prefs[KEY_READ_RECEIPTS] ?: false
         lastContactsSync = prefs[KEY_CONTACTS_SYNC] ?: 0L
         serverAccount = prefs[KEY_ACCOUNT]
+        chatListImported = prefs[KEY_CHAT_LIST_IMPORTED] ?: false
     }
 
     fun saveServer(url: String, password: String) {
@@ -98,13 +104,20 @@ class Store(private val dataStore: DataStore<Preferences>, private val scope: Co
         persist { if (value == null) it.remove(KEY_ACCOUNT) else it[KEY_ACCOUNT] = value }
     }
 
+    fun markChatListImported() {
+        chatListImported = true
+        persist { it[KEY_CHAT_LIST_IMPORTED] = true }
+    }
+
     /** Forgets how far this phone has synced, so the next sync starts from the server's newest messages again. */
     fun resetSyncState() {
         lastSeenDate = 0L
         lastContactsSync = 0L
+        chatListImported = false
         persist {
             it.remove(KEY_LAST_SEEN)
             it.remove(KEY_CONTACTS_SYNC)
+            it.remove(KEY_CHAT_LIST_IMPORTED)
         }
     }
 
@@ -116,11 +129,12 @@ class Store(private val dataStore: DataStore<Preferences>, private val scope: Co
         sendReadReceipts = false
         lastContactsSync = 0L
         serverAccount = null
+        chatListImported = false
         // The SDK keeps its own keys in this same DataStore, so only this tool's keys are removed.
         dataStore.edit { prefs ->
             listOf(KEY_URL, KEY_PASSWORD, KEY_ACCOUNT).forEach { prefs.remove(it) }
             listOf(KEY_LAST_SEEN, KEY_CONTACTS_SYNC).forEach { prefs.remove(it) }
-            listOf(KEY_PRIVATE_API, KEY_READ_RECEIPTS).forEach { prefs.remove(it) }
+            listOf(KEY_PRIVATE_API, KEY_READ_RECEIPTS, KEY_CHAT_LIST_IMPORTED).forEach { prefs.remove(it) }
         }
     }
 
@@ -136,6 +150,7 @@ class Store(private val dataStore: DataStore<Preferences>, private val scope: Co
         private val KEY_READ_RECEIPTS = booleanPreferencesKey("bb_read_receipts")
         private val KEY_CONTACTS_SYNC = longPreferencesKey("bb_contacts_sync")
         private val KEY_ACCOUNT = stringPreferencesKey("bb_server_account")
+        private val KEY_CHAT_LIST_IMPORTED = booleanPreferencesKey("bb_chat_list_imported")
 
         /**
          * Turns what was typed or scanned into a server URL, with no trailing slash. A scheme that was given is kept.

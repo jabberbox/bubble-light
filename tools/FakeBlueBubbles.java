@@ -21,7 +21,7 @@ import javax.imageio.ImageIO;
  * From the Android emulator the host is http://10.0.2.2:PORT (debug builds allow plain HTTP for this).
  * Port PORT speaks both plain HTTP and a Socket.IO v4 WebSocket feed (a front door hands upgrades to the feed and
  * pipes everything else to an internal HTTP server on PORT+1).
- * Admin routes (all need the password): /admin/incoming?text=..&from=..  /admin/read?chat=..  /admin/drop  /admin/mute  /admin/account?name=..
+ * Admin routes (all need the password): /admin/incoming?text=..&from=..  /admin/read?chat=..  /admin/drop  /admin/mute  /admin/account?name=..  /admin/sweepcap?n=..
  */
 public class FakeBlueBubbles {
     record Chat(String guid, String name, boolean group, List<String> people) {}
@@ -87,6 +87,15 @@ public class FakeBlueBubbles {
         add(sam, "I missed it, tell me everything", 1490, true, null, false, "");
         add(jordan, "Can you send me the address?", 5, false, "+15550100003", true, "");
         add(stranger, "Your package has been delivered", 4000, false, "+15550100009", false, "");
+
+        // Old, quiet chats. With a small sweep cap (see /admin/sweepcap) they sit outside the newest messages, the way
+        // quiet chats do on a real server. The dentist's message was never read.
+        Chat oldFriend = new Chat("iMessage;-;+15550100010", "", false, List.of("+15550100010"));
+        Chat dentist = new Chat("iMessage;-;+15550100011", "", false, List.of("+15550100011"));
+        contacts.put("+15550100010", "Casey Morgan");
+        add(oldFriend, "Long time no see!", 60 * 24 * 55, false, "+15550100010", false, "");
+        add(oldFriend, "We should catch up soon", 60 * 24 * 55 - 5, true, null, false, "");
+        add(dentist, "Your appointment is confirmed", 60 * 24 * 40, false, "+15550100011", true, "");
 
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", port + 1), 0);
         server.createContext("/", FakeBlueBubbles::handle);
@@ -173,9 +182,24 @@ public class FakeBlueBubbles {
             admin(ex, path, q);
         } else if (path.equals("/api/v1/server/info")) {
             json(ex, 200, "{\"status\":200,\"data\":{\"server_version\":\"fake\",\"private_api\":false,\"helper_connected\":false,\"detected_icloud\":" + q(account) + "}}");
+        } else if (path.equals("/api/v1/chat/query")) {
+            int limit = (int) num(body, "limit", 1000);
+            int offset = (int) num(body, "offset", 0);
+            Map<String, Msg> newest = new java.util.LinkedHashMap<>();
+            for (Msg m : newestFirst) newest.putIfAbsent(m.chat.guid, m);
+            StringBuilder out = new StringBuilder();
+            int skipped = 0, taken = 0;
+            for (Msg m : newest.values()) {
+                if (skipped++ < offset) continue;
+                if (taken++ >= limit) break;
+                String chat = chatJson(m.chat);
+                out.append(out.length() > 0 ? "," : "").append(chat, 0, chat.length() - 1)
+                    .append(",\"lastMessage\":").append(msgJson(m, false)).append("}");
+            }
+            json(ex, 200, "{\"status\":200,\"data\":[" + out + "]}");
         } else if (path.equals("/api/v1/message/query")) {
             long after = num(body, "after", 0);
-            int limit = (int) num(body, "limit", 100);
+            int limit = Math.min((int) num(body, "limit", 100), sweepCap);
             int offset = (int) num(body, "offset", 0);
             StringBuilder out = new StringBuilder();
             int skipped = 0, taken = 0;
@@ -267,6 +291,8 @@ public class FakeBlueBubbles {
 
     static final List<WsClient> clients = new ArrayList<>();
     static volatile boolean muted = false;
+    /** The most messages a message query returns, to reproduce chats a sweep of the newest messages never reaches. */
+    static volatile int sweepCap = Integer.MAX_VALUE;
     static volatile String account = "fake@icloud.com";
 
     static class WsClient {
@@ -442,6 +468,9 @@ public class FakeBlueBubbles {
             synchronized (clients) { snapshot = new ArrayList<>(clients); }
             for (WsClient c : snapshot) c.socket.close();
             json(ex, 200, "{\"status\":200}");
+        } else if (path.equals("/admin/sweepcap")) {
+            sweepCap = Integer.parseInt(q.getOrDefault("n", "2147483647"));
+            json(ex, 200, "{\"status\":200,\"sweepCap\":" + sweepCap + "}");
         } else if (path.equals("/admin/account")) {
             account = q.getOrDefault("name", account);
             json(ex, 200, "{\"status\":200}");

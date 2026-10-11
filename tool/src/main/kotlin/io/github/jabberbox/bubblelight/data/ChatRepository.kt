@@ -108,6 +108,7 @@ class ChatRepository(
                 }
             }
             ingest(rows)
+            importChatList()
             hasSynced.value = true
             syncFailed.value = false
             lastSyncAt = System.currentTimeMillis()
@@ -123,8 +124,34 @@ class ChatRepository(
         }
     }
 
+    /**
+     * Learns about every chat the server has, once. The sweep of recent messages only reaches the chats that are busy
+     * right now, so the rest would never be listed, and neither would their history. Each chat comes with its newest
+     * message, which is stored so the chat can be listed and ordered. A chat found here for the first time is old news,
+     * so it starts out read rather than turning every quiet conversation into an unread one.
+     *
+     * A failure leaves the import to be tried again on the next sync and does not fail the sync itself.
+     */
+    private suspend fun importChatList() {
+        if (store.chatListImported) return
+        try {
+            val entries = withContext(Dispatchers.IO) { api.chatList() }
+            val known = db.chats().all().mapTo(HashSet()) { it.guid }
+            val rows = entries.mapNotNull { entry -> entry.last?.let { ParsedMessage(it, entry.info) } }
+            ingest(rows, advanceCursor = false)
+            val fresh = rows.map { it.message.chatGuid }.filter { it !in known }.distinct()
+            fresh.chunked(500).forEach { db.chats().setAllLocalRead(it) }
+            store.markChatListImported()
+            log("chat list: ${entries.size} chats, ${fresh.size} new")
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            log("chat list failed: ${e::class.simpleName} ${e.message}")
+        }
+    }
+
     /** Stores messages from the server, whichever path they came by. */
-    suspend fun ingest(rows: List<ParsedMessage>) {
+    suspend fun ingest(rows: List<ParsedMessage>, advanceCursor: Boolean = true) {
         if (rows.isEmpty()) return
         db.withTransaction {
             // Rows arrive newest first, so the first chat object seen for a room is the freshest.
@@ -139,7 +166,7 @@ class ChatRepository(
             db.messages().upsert(rows.map { it.message })
             db.chats().recompute(rows.map { it.message.chatGuid }.distinct())
         }
-        store.advanceLastSeen(rows.maxOf { it.message.dateCreated })
+        if (advanceCursor) store.advanceLastSeen(rows.maxOf { it.message.dateCreated })
     }
 
     /** A chat was read somewhere on the account, so its dot clears here too. */
