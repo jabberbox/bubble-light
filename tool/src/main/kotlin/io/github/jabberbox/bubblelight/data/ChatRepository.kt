@@ -93,6 +93,26 @@ class ChatRepository(
 
     // ---- syncing -----------------------------------------------------------
 
+    /** How many messages the last sync found that the phone had not seen. */
+    private var newFound = 0
+
+    /** What a sync the user asked for came to: it could not start, it failed, or it finished with [fresh] new messages. */
+    data class SyncReport(val busy: Boolean = false, val ok: Boolean = false, val fresh: Int = 0)
+
+    /**
+     * Syncs now, whatever the minimum gap, and sends anything waiting in the queue if the server answered. Used by the
+     * tap on the list's top band.
+     */
+    suspend fun syncNow(): SyncReport {
+        if (syncMutex.isLocked) return SyncReport(busy = true)
+        newFound = 0
+        _lastSyncOk.value = null
+        sync(force = true)
+        val ok = _lastSyncOk.value == true
+        if (ok) flushQueued()
+        return SyncReport(ok = ok, fresh = newFound)
+    }
+
     /**
      * Catches up with the server: every message since the last one seen, plus the newest few again so read
      * marks changed elsewhere show up. The first run takes one large sweep, which is also what builds the
@@ -131,6 +151,9 @@ class ChatRepository(
                 }
             }
             ingest(rows)
+            if (cursor > 0L) {
+                newFound = rows.count { it.message.dateCreated > cursor && it.message.reaction == null && it.message.itemType == 0 }
+            }
             // Those two steps handle their own errors, so a failure there must still count against the whole sync.
             val chatsOk = importChatList(report = full)
             var contactsOk = true
@@ -142,6 +165,7 @@ class ChatRepository(
             hasSynced.value = true
             syncFailed.value = !ok
             lastSyncAt = System.currentTimeMillis()
+            _lastHeardAt.value = lastSyncAt
             _lastSyncOk.value = ok
             log("sync: ${rows.size} messages" + if (ok) "" else ", incomplete")
         } catch (e: CancellationException) {
@@ -206,6 +230,7 @@ class ChatRepository(
     /** Stores messages from the server, whichever path they came by. */
     suspend fun ingest(rows: List<ParsedMessage>, advanceCursor: Boolean = true) {
         if (rows.isEmpty()) return
+        _lastHeardAt.value = System.currentTimeMillis()
         db.withTransaction {
             // Rows arrive newest first, so the first chat object seen for a room is the freshest.
             val chats = LinkedHashMap<String, ChatInfo>()
@@ -297,14 +322,18 @@ class ChatRepository(
 
     /** Shows the message straight away, then sends it. It runs in the tool's scope so leaving the screen cannot strand it. */
     fun send(chatGuid: String, text: String) {
+        scope.launch { sendText(chatGuid, text) }
+    }
+
+    private suspend fun sendText(chatGuid: String, text: String): Delivery {
         val body = text.trim()
-        if (body.isEmpty()) return
+        if (body.isEmpty()) return Delivery.Sent
         val id = "temp-${UUID.randomUUID()}"
         val row = MessageEntity(
             guid = id, chatGuid = chatGuid, text = body, dateCreated = System.currentTimeMillis(),
             fromMe = true, sender = null, tempGuid = id, state = MessageState.SENDING,
         )
-        scope.launch { deliver(row) { method -> api.sendText(chatGuid, body, id, method) } }
+        return deliver(row) { method -> api.sendText(chatGuid, body, id, method) }
     }
 
     /**
@@ -312,7 +341,11 @@ class ChatRepository(
      * until the server has it, so a failure can be retried.
      */
     fun sendVoice(chatGuid: String, file: File) {
-        if (!file.exists() || file.length() == 0L) return
+        scope.launch { sendRecording(chatGuid, file) }
+    }
+
+    private suspend fun sendRecording(chatGuid: String, file: File): Delivery {
+        if (!file.exists() || file.length() == 0L) return Delivery.Sent
         val id = "temp-${UUID.randomUUID()}"
         val attachment = AttachmentInfo(guid = id, mimeType = VOICE_MIME, name = file.name)
         val row = MessageEntity(
@@ -320,20 +353,21 @@ class ChatRepository(
             fromMe = true, sender = null, attachments = AttachmentJson.encode(listOf(attachment)),
             tempGuid = id, state = MessageState.SENDING,
         )
-        scope.launch {
-            deliver(row, onSent = { file.delete() }) { method ->
-                api.sendAttachment(chatGuid, file, VOICE_NAME, VOICE_MIME, id, method, voice = true)
-            }
+        return deliver(row, onSent = { file.delete() }) { method ->
+            api.sendAttachment(chatGuid, file, VOICE_NAME, VOICE_MIME, id, method, voice = true)
         }
     }
 
+    /** How a send ended: the server has it, it is waiting for a connection, or it failed and needs a tap. */
+    private enum class Delivery { Sent, Queued, Failed }
+
     /** Stores the local copy, then runs [call] and settles the row from what it returns. */
-    private suspend fun deliver(row: MessageEntity, onSent: () -> Unit = {}, call: (method: String) -> MessageEntity?) {
+    private suspend fun deliver(row: MessageEntity, onSent: () -> Unit = {}, call: (method: String) -> MessageEntity?): Delivery {
         db.withTransaction {
             db.messages().upsert(listOf(row))
             db.chats().recompute(listOf(row.chatGuid))
         }
-        try {
+        return try {
             val method = if (store.privateApi) "private-api" else "apple-script"
             val saved = withContext(Dispatchers.IO) { call(method) }
             db.withTransaction {
@@ -346,24 +380,52 @@ class ChatRepository(
                 db.chats().recompute(listOf(row.chatGuid))
             }
             onSent()
+            Delivery.Sent
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             log("send failed: ${e::class.simpleName} ${e.message}")
-            db.messages().setState(row.guid, MessageState.FAILED)
+            // A send that never reached the server waits for a connection and goes out by itself. One that may have
+            // reached it is left for a tap, since sending it again by itself could deliver it twice.
+            if (SendErrors.neverReachedServer(e)) {
+                db.messages().setState(row.guid, MessageState.QUEUED)
+                Delivery.Queued
+            } else {
+                db.messages().setState(row.guid, MessageState.FAILED)
+                Delivery.Failed
+            }
         }
     }
 
-    /** Sends a failed message again as a new one, since the old copy may or may not have reached the Mac. */
+    /** Sends a failed or waiting message again as a new one, since the old copy may or may not have reached the Mac. */
     fun retry(guid: String) {
-        scope.launch {
-            val row = db.messages().get(guid) ?: return@launch
-            if (row.state != MessageState.FAILED && row.error == 0) return@launch
-            db.messages().delete(guid)
-            db.chats().recompute(listOf(row.chatGuid))
-            // A failed voice message still has its recording on disk; anything else is text.
-            val recording = row.attachmentList.firstOrNull { it.mimeType == VOICE_MIME }?.name?.let { File(voiceDir, it) }
-            if (recording != null) sendVoice(row.chatGuid, recording) else send(row.chatGuid, row.text)
+        scope.launch { resend(guid) }
+    }
+
+    private suspend fun resend(guid: String): Delivery? {
+        val row = db.messages().get(guid) ?: return null
+        if (row.state != MessageState.FAILED && row.state != MessageState.QUEUED && row.error == 0) return null
+        db.messages().delete(guid)
+        db.chats().recompute(listOf(row.chatGuid))
+        // A voice message still has its recording on disk; anything else is text.
+        val recording = row.attachmentList.firstOrNull { it.mimeType == VOICE_MIME }?.name?.let { File(voiceDir, it) }
+        return if (recording != null) sendRecording(row.chatGuid, recording) else sendText(row.chatGuid, row.text)
+    }
+
+    private val flushMutex = Mutex()
+
+    /**
+     * Sends the messages that were waiting for a connection, oldest first and one at a time so they arrive in order.
+     * It stops at the first one that still cannot get through, leaving the rest waiting.
+     */
+    suspend fun flushQueued() {
+        if (!flushMutex.tryLock()) return
+        try {
+            for (row in db.messages().queued()) {
+                if (resend(row.guid) == Delivery.Queued) break
+            }
+        } finally {
+            flushMutex.unlock()
         }
     }
 
@@ -410,6 +472,44 @@ class ChatRepository(
 
     fun setPinned(guids: Collection<String>, pinned: Boolean) = store.setPinned(guids, pinned)
 
+    /** Archived rooms with the date of the newest message each had when it was archived. */
+    val archived: StateFlow<Map<String, Long>> get() = store.archived
+
+    fun setArchived(guids: Collection<String>, lastDate: Long) = store.setArchived(guids, lastDate)
+
+    fun unarchive(guids: Collection<String>) = store.unarchive(guids)
+
+    fun draft(guid: String): String = store.draft(guid)
+
+    fun setDraft(guid: String, text: String) = store.setDraft(guid, text)
+
+    /** Treats every chat as read on this phone. It sends no read receipts, which one for every chat would be a flood. */
+    suspend fun markAllRead() {
+        db.chats().setAllLocalRead(db.chats().all().map { it.guid })
+    }
+
+    private val _lastHeardAt = MutableStateFlow<Long?>(null)
+
+    /** When the server last answered with something, from a sync or a live message. Null before the first. */
+    val lastHeardAt: StateFlow<Long?> = _lastHeardAt.asStateFlow()
+
+    /** The date of the newest real message the server has delivered, which shows when it has gone quiet. */
+    val newestMessage: Flow<Long?> get() = db.chats().observeNewestReal()
+
+    /** Messages on the phone whose text contains [needle], newest first. */
+    suspend fun searchLocal(needle: String, limit: Int = SEARCH_LIMIT): List<MessageEntity> =
+        db.messages().search(needle, limit)
+
+    /** The same search run by the server over its whole history, or null if the server could not be asked. */
+    suspend fun searchServer(needle: String, limit: Int = SEARCH_LIMIT): List<MessageEntity>? = try {
+        withContext(Dispatchers.IO) { api.searchMessages(needle, limit) }
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        log("search failed: ${e::class.simpleName}")
+        null
+    }
+
     /** Downloads one attachment to [dest], for the photo loader. */
     fun download(guid: String, dest: java.io.File) = api.downloadAttachment(guid, dest)
 
@@ -423,6 +523,7 @@ class ChatRepository(
         const val GAP_MAX = 2000
         const val MIN_SYNC_GAP_MS = 5_000L
         const val CONTACTS_TTL_MS = 6 * 60 * 60 * 1000L
+        const val SEARCH_LIMIT = 30
 
         // The SDK's recorder writes MPEG-4 audio; Messages names a voice message this way.
         const val VOICE_MIME = "audio/mp4"

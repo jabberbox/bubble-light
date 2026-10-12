@@ -51,6 +51,29 @@ class BlueBubblesApi(baseUrl: String, private val password: String) {
     }
 
     /**
+     * `POST /message/query` with a `where` on the text: the newest messages anywhere in the server's history that
+     * contain [needle], without tapbacks and group events. The phone only holds part of that history.
+     */
+    fun searchMessages(needle: String, limit: Int): List<MessageEntity> {
+        val body = JSONObject()
+            .put("limit", limit)
+            .put("offset", 0)
+            .put("with", JSONArray().put("chats").put("handle").put("attachment"))
+            .put("sort", "DESC")
+            .put(
+                "where",
+                JSONArray().put(
+                    JSONObject()
+                        .put("statement", "message.text LIKE :text")
+                        .put("args", JSONObject().put("text", "%$needle%")),
+                ),
+            )
+        return BlueBubblesJson.parseMessages(requestChecked("POST", "/api/v1/message/query", body, what = "search"))
+            .map { it.message }
+            .filter { it.reaction == null && it.itemType == 0 }
+    }
+
+    /**
      * `POST /chat/query`: one page of the chats the server has, most recently active first, each with its
      * participants and newest message. A sweep of recent messages only reaches the chats that are busy right now,
      * so this is how the quieter ones are found. The caller pages through with [offset] until a page comes back short.

@@ -297,11 +297,20 @@ class ThreadViewModel(
 
     /** Hands the number to LightOS, which opens its dialer with it filled in. */
     fun call() {
-        val number = callNumber.value ?: return
+        dial(callNumber.value ?: return)
+    }
+
+    /** Dials a number written in a message, as written, in the form the dialer wants. */
+    fun callWritten(written: String) = dial(Contacts.dial(written))
+
+    private fun dial(number: String) {
         viewModelScope.launch {
             callRemoteServiceMethod(LightServiceMethod.OpenDialer, LightServiceMethod.OpenDialer.Request(phoneNumber = number))
         }
     }
+
+    /** The key a draft for this chat is kept under: the room new messages go to. */
+    val draftKey: String get() = sendTarget
 
     private companion object {
         const val PAGE = 60
@@ -359,7 +368,8 @@ class ThreadScreen(
                 Column(Modifier.fillMaxSize()) {
                     LightTopBar(
                         leftButton = LightBarButton.LightIcon(icon = LightIcons.BACK, onClick = { if (attachOpen) attachOpen = false else goBack() }),
-                        center = LightTopBarCenter.Text(title),
+                        // Where the stock thread opens the contact, the title opens this chat's options.
+                        center = LightTopBarCenter.Text(title, onClick = ::openOptions),
                         // Where the stock thread has an empty slot: a star that pins the chat to the top of the list.
                         rightButton = LightBarButton.LightIcon(
                             icon = if (pinned) LightIcons.STAR else LightIcons.STAR_OUTLINE,
@@ -453,7 +463,15 @@ class ThreadScreen(
 
     private fun compose() {
         val title = viewModel.title.value
-        navigateTo({ ComposeScreen(it, title = title) }) { text -> viewModel.send(text) }
+        val draftKey = viewModel.draftKey
+        navigateTo({ ComposeScreen(it, title = title, draftKey = draftKey) }) { text -> viewModel.send(text) }
+    }
+
+    /** Pin and archive, behind the title. Archiving leaves nothing to show here, so the thread closes with it. */
+    private fun openOptions() {
+        navigateTo({ ChatOptionsScreen(it, chatGuid) }) { result ->
+            if (result == ChatOptionsResult.ARCHIVED) goBack()
+        }
     }
 
     @Composable
@@ -473,7 +491,7 @@ class ThreadScreen(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .let { if (m.failed) it.lightClickable { viewModel.retry(m.id) } else it },
+                .let { if (m.failed || m.queued) it.lightClickable { viewModel.retry(m.id) } else it },
             horizontalAlignment = if (m.mine) Alignment.End else Alignment.Start,
         ) {
             // In a group the sender's name sits on its own line above the stamp, in the same small type.
@@ -490,12 +508,31 @@ class ThreadScreen(
             if (m.text.isNotEmpty()) {
                 StockText(text = m.text, style = StockType.Message, lighten = m.dim, align = end, modifier = Modifier.fillMaxWidth())
             }
+            // A phone number in the text gets a line of its own to dial it, since a tool cannot make the number itself a link.
+            m.phones.forEach { PhoneRow(it, m.mine) }
             m.reactions?.let {
                 StockText(text = it, style = StockType.Stamp, lighten = true, align = end, modifier = Modifier.fillMaxWidth())
             }
             m.status?.let {
                 StockText(text = it, style = StockType.Stamp, lighten = true, align = TextAlign.End, modifier = Modifier.fillMaxWidth())
             }
+        }
+    }
+
+    /** "Call 608-264-6591": tapping hands the number to LightOS's dialer. */
+    @Composable
+    private fun PhoneRow(written: String, mine: Boolean) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .lightClickable { viewModel.callWritten(written) }
+                .padding(vertical = 0.25f.gridUnitsAsDp()),
+            horizontalArrangement = if (mine) Arrangement.End else Arrangement.Start,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            LightIcon(icon = LightIcons.CALL, size = 1f)
+            Spacer(Modifier.width(0.5f.gridUnitsAsDp()))
+            StockText(text = "Call $written", style = StockType.Stamp)
         }
     }
 

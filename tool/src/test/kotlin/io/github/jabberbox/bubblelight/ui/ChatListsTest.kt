@@ -6,8 +6,30 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ChatListsTest {
-    private fun row(id: String, known: Boolean = true, pinned: Boolean = false, unread: Boolean = false) =
-        ChatRow(id = id, name = id, unread = unread, known = known, pinned = pinned)
+    private fun row(id: String, known: Boolean = true, pinned: Boolean = false, unread: Boolean = false, archived: Boolean = false) =
+        ChatRow(id = id, name = id, unread = unread, known = known, pinned = pinned, archived = archived)
+
+    @Test
+    fun anArchivedChatLeavesTheMainListAndIsBehindItsOwnRow() {
+        val all = listOf(row("a"), row("b", archived = true), row("c"))
+        val main = ChatLists.main(all)
+        assertEquals(listOf("a", "c", ChatLists.ARCHIVED_ID), main.map { it.id })
+        assertTrue(main.last().muted)
+        assertEquals(listOf("b"), ChatLists.archived(all).map { it.id })
+    }
+
+    @Test
+    fun archivedWinsOverPinnedAndOverUnknown() {
+        val all = listOf(row("p", pinned = true, archived = true), row("x", known = false, archived = true), row("a"))
+        assertEquals(listOf("a", ChatLists.ARCHIVED_ID), ChatLists.main(all).map { it.id })
+        assertTrue(ChatLists.unknown(all).isEmpty())
+    }
+
+    @Test
+    fun bothRowsShowTheUnknownSendersFirst() {
+        val all = listOf(row("a"), row("x", known = false), row("b", archived = true))
+        assertEquals(listOf("a", ChatLists.UNKNOWN_ID, ChatLists.ARCHIVED_ID), ChatLists.main(all).map { it.id })
+    }
 
     @Test
     fun pinnedChatsComeFirstThenPeopleYouKnow() {

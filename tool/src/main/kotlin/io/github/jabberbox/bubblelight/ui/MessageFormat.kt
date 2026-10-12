@@ -27,10 +27,14 @@ data class UiMessage(
     val sender: String? = null,
     val text: String,
     val mine: Boolean,
-    /** Shown in the secondary gray while still sending. A failed message stays white, as in the stock app. */
+    /** Shown in the secondary gray while still sending or waiting. A failed message stays white, as in the stock app. */
     val dim: Boolean,
     /** Tapping it sends it again. */
     val failed: Boolean,
+    /** Waiting for a connection: it goes out by itself, and a tap sends it now. */
+    val queued: Boolean = false,
+    /** Phone numbers written in the text, as written, each shown with a way to dial it. */
+    val phones: List<String> = emptyList(),
     val photos: List<PhotoRef> = emptyList(),
     /** Voice messages and sounds in it, each played from its own row. */
     val audios: List<AudioRef> = emptyList(),
@@ -60,7 +64,8 @@ object MessageFormat {
         m.itemType == 1 && m.groupActionType == 0 -> "$actor added someone to the conversation"
         m.itemType == 1 && m.groupActionType == 1 -> "$actor removed someone from the conversation"
         m.itemType == 3 && m.groupActionType == 0 -> "$actor left the conversation"
-        m.itemType == 3 -> "$actor changed the group photo"
+        m.itemType == 3 && m.groupActionType == 1 -> "$actor changed the group photo"
+        m.itemType == 3 && m.groupActionType == 2 -> "$actor removed the group photo"
         else -> null
     }
 
@@ -95,14 +100,17 @@ object MessageFormat {
             // A message that did not go says so where the stamp would be, as the stock app does. Tapping it retries.
             time = when {
                 m.state == MessageState.FAILED -> "FAILED TO SEND"
+                m.state == MessageState.QUEUED -> "WAITING TO SEND"
                 m.error != 0 -> "NOT DELIVERED"
                 else -> time
             },
             sender = if (!m.fromMe && ctx.isGroup) m.sender?.let(ctx.contacts::fullName) else null,
             text = listOfNotNull(body.ifEmpty { null }, note?.let { "($it)" }).joinToString(" "),
             mine = m.fromMe,
-            dim = m.state == MessageState.SENDING,
+            dim = m.state == MessageState.SENDING || m.state == MessageState.QUEUED,
             failed = failed,
+            queued = m.state == MessageState.QUEUED,
+            phones = PhoneLinks.find(m.text),
             photos = photos,
             audios = audios,
             reactions = ctx.tapbacks[m.guid]?.let { Tapbacks.summary(it, ctx.isGroup, ctx.contacts::sender) }?.ifEmpty { null },

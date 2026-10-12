@@ -65,12 +65,27 @@ cached on the phone are cleared and downloaded again from the new server.
 
 - Conversation list of every chat the server has, with unread dots and contact names taken from the Mac's
   address book. Chats that were already quiet when you first connected start out as read.
-- Search in the list, by a chat's name, by anyone in it, or by number.
+- Search finds chats by name, by anyone in them, or by number, and finds messages by their text, with a few words
+  of the message around the match. Messages on the phone appear at once; the server's own search adds older ones
+  that were never downloaded.
 - Chats from numbers and addresses that are not in the Mac's address book (verification codes, delivery notices,
   strangers) wait behind a last row, **Unknown senders**, so the main list is the people you know. Nothing is hidden
   or deleted, and search still finds them.
-- Pin a chat with the star at the top of its thread. Pinned chats stay at the top of the list. Pins are kept on
-  the phone only.
+- Pin a chat with the star at the top of its thread. Pinned chats stay at the top of the list.
+- Tap the title of a thread for its options: pin, and **Archive**. An archived chat leaves the list and waits behind
+  an **Archived** row until something new arrives in it, which brings it back. Pins and archives are kept on the
+  phone only.
+- **Mark all read** in Settings clears every unread dot on the phone. It sends no read receipts.
+- Drafts: what you have typed in a chat's editor is kept, and is there again when you come back to it. Sending
+  clears it.
+- A message written while the server cannot be reached says **WAITING TO SEND** and goes out by itself when the
+  connection returns, in the order it was written. A send that may already have reached the server is not sent
+  again by itself, because that could deliver it twice; it says FAILED TO SEND and waits for a tap.
+- A phone number in a message gets a "Call" line under it, which hands the number to LightOS's dialer.
+- Tap the empty band at the top of the chat list, where the bubble sits, to sync now. It says "Up to date", "2 new
+  messages" or "Could not reach the server" for a moment, and sends anything waiting to go out.
+- Settings shows the newest message the server has delivered and when it last answered, so a server that has gone
+  quiet looks different from a chat that is.
 - Play voice messages you receive: tap the play button in the thread. The phone fetches the sound from the server
   the first time. A sound the phone cannot play says so.
 - Reading threads, one-to-one and group, with older history loading as you scroll up.

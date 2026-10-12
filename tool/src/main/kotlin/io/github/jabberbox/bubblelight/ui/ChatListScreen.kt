@@ -49,6 +49,8 @@ import java.io.IOException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -73,36 +75,49 @@ data class ChatRow(
     val haystack: String = "",
     val known: Boolean = true,
     val pinned: Boolean = false,
+    val archived: Boolean = false,
     val muted: Boolean = false,
 )
 
-/** How the full list is split between the main list and the unknown senders behind its last row. */
+/** How the full list is split between the main list and the rows behind its last rows: unknown senders and archived. */
 object ChatLists {
-    /** The id of the last row, which opens the unknown senders instead of a chat. */
+    /** The id of a last row that opens the unknown senders instead of a chat. */
     const val UNKNOWN_ID = "unknown-senders"
 
-    /** Pinned chats first, then chats from people you know, then a row for the rest if there are any. */
+    /** The id of a last row that opens the archived chats instead of a chat. */
+    const val ARCHIVED_ID = "archived-chats"
+
+    /**
+     * Pinned chats first, then chats from people you know, then a row each for the unknown senders and the archive,
+     * when there are any. An archived chat is only ever in the archive, even if it is pinned.
+     */
     fun main(all: List<ChatRow>): List<ChatRow> {
         val unknown = unknown(all)
-        val rest = all.filter { !it.pinned && it.known }
-        val footer = if (unknown.isEmpty()) {
-            emptyList()
-        } else {
-            listOf(ChatRow(UNKNOWN_ID, "Unknown senders", unread = unknown.any { it.unread }, muted = true))
+        val archived = archived(all)
+        val live = all.filter { !it.archived }
+        val footers = buildList {
+            if (unknown.isNotEmpty()) add(ChatRow(UNKNOWN_ID, "Unknown senders", unread = unknown.any { it.unread }, muted = true))
+            if (archived.isNotEmpty()) add(ChatRow(ARCHIVED_ID, "Archived", unread = false, muted = true))
         }
-        return all.filter { it.pinned } + rest + footer
+        return live.filter { it.pinned } + live.filter { !it.pinned && it.known } + footers
     }
 
-    /** Chats from numbers and addresses that are not in the address book, unless pinned. */
-    fun unknown(all: List<ChatRow>): List<ChatRow> = all.filter { !it.pinned && !it.known }
+    /** Chats from numbers and addresses that are not in the address book, unless pinned or archived. */
+    fun unknown(all: List<ChatRow>): List<ChatRow> = all.filter { !it.archived && !it.pinned && !it.known }
+
+    /** Chats put away, until something new arrives in them. */
+    fun archived(all: List<ChatRow>): List<ChatRow> = all.filter { it.archived }
 }
 
 /** Height of a row in the chat list, in grid units: the stock list's 150 pixel rows and 10 pixel gaps. */
 private const val ROW_UNITS = 4f
 
+/** How long the answer to a tap on the top band stays up. */
+private const val FLASH_MS = 3_000L
+
 /** The rows of the chat list for a session, newest first. */
 internal fun chatRows(s: Session): Flow<List<ChatRow>> =
-    combine(s.repo.conversations(), s.repo.contacts, s.repo.pinned) { conversations, contacts, pinned ->
+    combine(s.repo.conversations(), s.repo.contacts, s.repo.pinned, s.repo.archived) { conversations, contacts, pinned, archived ->
         conversations.map { conv ->
             val name = contacts.title(conv.displayName, conv.participants)
             val everyone = conv.participants.flatMap { listOf(contacts.fullName(it), it) }
@@ -114,6 +129,8 @@ internal fun chatRows(s: Session): Flow<List<ChatRow>> =
                 // Before the address book has loaded nobody can be told from a stranger, so everyone counts as known.
                 known = contacts.isEmpty || conv.displayName.isNotBlank() || contacts.knowsAny(conv.participants),
                 pinned = conv.guids.any { it in pinned },
+                // Put away until something newer than what it held at the time arrives.
+                archived = conv.guids.any { (archived[it] ?: -1L) >= conv.lastDate },
             )
         }
     }
@@ -131,7 +148,7 @@ internal fun ChatRowList(rows: List<ChatRow>, modifier: Modifier = Modifier, onO
 }
 
 @Composable
-private fun ChatRowItem(chat: ChatRow, onClick: () -> Unit) {
+internal fun ChatRowItem(chat: ChatRow, onClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -189,6 +206,26 @@ class ChatListViewModel(private val graph: BubbleGraph) : LightViewModel<Unit>()
 
     /** A one-line problem to show above the list, such as a first message that could not be sent. */
     val notice: StateFlow<String?> = _notice.asStateFlow()
+
+    private val _flash = MutableStateFlow<String?>(null)
+
+    /** The answer to a tap on the top band, shown there for a few seconds. */
+    val flash: StateFlow<String?> = _flash.asStateFlow()
+
+    private var syncTap: Job? = null
+
+    /** Syncs with the server now and reports what came of it. A tap while one is running is ignored. */
+    fun syncNow() {
+        val repo = graph.session.value?.repo ?: return
+        if (syncTap?.isActive == true) return
+        syncTap = viewModelScope.launch {
+            _flash.value = SyncNote.WORKING
+            val note = SyncNote.of(repo.syncNow())
+            _flash.value = note
+            delay(FLASH_MS)
+            if (_flash.value == note) _flash.value = null
+        }
+    }
 
     /** Checks the password against the server. The password is never logged. */
     fun signIn(url: String, password: String) {
@@ -309,10 +346,12 @@ class ChatListScreen(sealedActivity: SealedLightActivity) : BubbleScreen<Unit, C
         // The stock list has no title bar, only the same height of empty space above the first row. A sync or a
         // problem, when there is one, is shown in that space. Otherwise it holds the one mark that tells this list
         // from the stock one: a small speech bubble.
-        val line = notice ?: if (status == SyncStatus.Offline) "Offline, will retry" else null
+        // A tap anywhere in the band asks for a sync and shows the answer here for a moment.
+        val flash by viewModel.flash.collectAsState()
+        val line = flash ?: notice ?: if (status == SyncStatus.Offline) "Offline, will retry" else null
         val running = progress
         Box(
-            Modifier.fillMaxWidth().height(3f.gridUnitsAsDp()).padding(horizontal = 2f.gridUnitsAsDp()),
+            Modifier.fillMaxWidth().height(3f.gridUnitsAsDp()).lightClickable { viewModel.syncNow() }.padding(horizontal = 2f.gridUnitsAsDp()),
             // The mark sits at the left edge of the names below it, 80 pixels in.
             contentAlignment = if (running != null || line != null) Alignment.BottomStart else Alignment.CenterStart,
         ) {
@@ -334,7 +373,11 @@ class ChatListScreen(sealedActivity: SealedLightActivity) : BubbleScreen<Unit, C
             }
         } else {
             ChatRowList(visible, Modifier.weight(1f)) { id ->
-                if (id == ChatLists.UNKNOWN_ID) openUnknownSenders() else openThread(id)
+                when (id) {
+                    ChatLists.UNKNOWN_ID -> openSubList(SubList.Unknown)
+                    ChatLists.ARCHIVED_ID -> openSubList(SubList.Archived)
+                    else -> openThread(id)
+                }
             }
         }
         LightBottomBar(
@@ -350,14 +393,14 @@ class ChatListScreen(sealedActivity: SealedLightActivity) : BubbleScreen<Unit, C
         navigateTo({ ThreadScreen(it, guid) })
     }
 
-    /** The chats from numbers and addresses that are not in the address book. */
-    private fun openUnknownSenders() {
-        navigateTo({ UnknownSendersScreen(it) }) { guid -> openThread(guid) }
+    /** A list kept behind the main one: the unknown senders, or the archive. */
+    private fun openSubList(which: SubList) {
+        navigateTo({ SubListScreen(it, which) }) { guid -> openThread(guid) }
     }
 
-    /** Asks for words with the Light keyboard, as the stock Phone app does, then lists the chats that match. */
+    /** Asks for words with the Light keyboard, as the stock Phone app does, then lists the chats and messages that match. */
     private fun search() {
-        navigateTo({ TextEntryScreen(it, title = "Search chats", submitLabel = "SEARCH", submitIcon = LightIcons.SEARCH) }) { words ->
+        navigateTo({ TextEntryScreen(it, title = "Search", submitLabel = "SEARCH", submitIcon = LightIcons.SEARCH) }) { words ->
             navigateTo({ ChatSearchScreen(it, words.trim()) }) { guid -> openThread(guid) }
         }
     }

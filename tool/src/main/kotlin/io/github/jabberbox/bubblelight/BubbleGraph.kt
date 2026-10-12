@@ -75,7 +75,8 @@ class BubbleGraph private constructor(private val lightContext: SealedLightConte
             onState = { up ->
                 repo.setSocketState(up)
                 // The server only pushes what happens while the socket is open, so every connect catches up.
-                if (up == true) scope.launch { repo.sync(force = true) }
+                // Messages written while the server could not be reached go out as soon as it can.
+                if (up == true) scope.launch { repo.sync(force = true); repo.flushQueued() }
             },
             onEvent = { name, data -> onEvent(repo, name, data) },
             log = ::log,
@@ -145,7 +146,7 @@ class BubbleGraph private constructor(private val lightContext: SealedLightConte
                 db.clearAllTables()
             }
             store.resetSyncState()
-            store.clearPins()
+            store.clearChatMarks()
         }
         store.saveServer(url, password)
         store.updatePrivateApi(info.privateApiReady)

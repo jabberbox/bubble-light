@@ -15,6 +15,7 @@ import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.ui.LightBarButton
 import com.thelightphone.sdk.ui.LightIcon
 import com.thelightphone.sdk.ui.LightIcons
+import com.thelightphone.sdk.ui.LightScrollView
 import com.thelightphone.sdk.ui.LightText
 import com.thelightphone.sdk.ui.LightTextVariant
 import com.thelightphone.sdk.ui.LightTopBar
@@ -62,11 +63,32 @@ class SettingsViewModel(private val graph: BubbleGraph) : LightViewModel<Unit>()
         .flatMapLatest { s -> s?.repo?.progress ?: flowOf<SyncProgress?>(null) }
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
+    /** The date of the newest real message the server has delivered. When it is old, the server has gone quiet. */
+    val newestMessage: StateFlow<Long?> = graph.session
+        .flatMapLatest { s -> s?.repo?.newestMessage ?: flowOf<Long?>(null) }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    /** When the server last answered with something, this time the tool has been running. */
+    val lastHeard: StateFlow<Long?> = graph.session
+        .flatMapLatest { s -> s?.repo?.lastHeardAt ?: flowOf<Long?>(null) }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    val formatTime: (Long) -> String = MessageFormat.formatter()
+
     private var resyncing = false
     private var sawProgress = false
 
     init {
         viewModelScope.launch { progress.collect { onProgress(it) } }
+    }
+
+    /** Clears every unread dot on this phone. No read receipts are sent. */
+    fun markAllRead() {
+        val repo = graph.session.value?.repo ?: return
+        viewModelScope.launch {
+            repo.markAllRead()
+            _status.value = "Every chat is marked read."
+        }
     }
 
     /** Once a resync has been seen running and then stops, says whether it finished or fell short. */
@@ -162,13 +184,15 @@ class SettingsScreen(sealedActivity: SealedLightActivity) : BubbleScreen<Unit, S
         val server by viewModel.server.collectAsState()
         val status by viewModel.status.collectAsState()
         val progress by viewModel.progress.collectAsState()
+        val newest by viewModel.newestMessage.collectAsState()
+        val heard by viewModel.lastHeard.collectAsState()
         BubbleTheme {
             LightTopBar(
                 leftButton = LightBarButton.LightIcon(icon = LightIcons.BACK, onClick = { goBack() }),
                 center = LightTopBarCenter.Text("Settings"),
                 modifier = Modifier.padding(bottom = 1f.gridUnitsAsDp()),
             )
-            Column(Modifier.fillMaxWidth().padding(horizontal = 1f.gridUnitsAsDp())) {
+            LightScrollView(Modifier.weight(1f).fillMaxWidth().padding(start = 1f.gridUnitsAsDp())) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -207,6 +231,14 @@ class SettingsScreen(sealedActivity: SealedLightActivity) : BubbleScreen<Unit, S
                         .padding(vertical = 0.75f.gridUnitsAsDp()),
                 )
                 LightText(
+                    text = "Mark all read",
+                    variant = LightTextVariant.Copy,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .lightClickable { viewModel.markAllRead() }
+                        .padding(vertical = 0.75f.gridUnitsAsDp()),
+                )
+                LightText(
                     text = if (confirm) "Tap again to sign out" else "Sign out",
                     variant = LightTextVariant.Copy,
                     modifier = Modifier
@@ -219,6 +251,22 @@ class SettingsScreen(sealedActivity: SealedLightActivity) : BubbleScreen<Unit, S
                     variant = LightTextVariant.Fine,
                     lighten = true,
                     modifier = Modifier.padding(top = 1f.gridUnitsAsDp()),
+                )
+                // Tells a quiet chat from a server that has stopped delivering: if the newest message is old, look at the Mac.
+                LightText(
+                    text = "Newest message received: " + (newest?.takeIf { it > 0L }?.let(viewModel.formatTime) ?: "none yet"),
+                    variant = LightTextVariant.Fine,
+                    lighten = true,
+                )
+                LightText(
+                    text = "Last heard from the server: " + (heard?.let(viewModel.formatTime) ?: "not yet"),
+                    variant = LightTextVariant.Fine,
+                    lighten = true,
+                )
+                LightText(
+                    text = "Private API: " + if (receiptsAvailable) "on" else "off",
+                    variant = LightTextVariant.Fine,
+                    lighten = true,
                 )
                 val running = progress
                 if (running != null) {

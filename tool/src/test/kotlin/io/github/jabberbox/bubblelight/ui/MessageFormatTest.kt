@@ -107,6 +107,23 @@ class MessageFormatTest {
     }
 
     @Test
+    fun aMessageWaitingForAConnectionSaysSoAndIsDim() {
+        val ui = MessageFormat.toUi(message(mine = true, state = MessageState.QUEUED), ctx(), time)!!
+        assertEquals("WAITING TO SEND", ui.time)
+        assertTrue(ui.queued)
+        assertTrue(ui.dim)
+        assertFalse(ui.failed)
+        assertNull(ui.status)
+    }
+
+    @Test
+    fun phoneNumbersInTheTextAreListedForDialing() {
+        val ui = MessageFormat.toUi(message(text = "ring me on (608) 264-6591 or 608-555-0100"), ctx(), time)!!
+        assertEquals(listOf("(608) 264-6591", "608-555-0100"), ui.phones)
+        assertTrue(MessageFormat.toUi(message(text = "no number here"), ctx(), time)!!.phones.isEmpty())
+    }
+
+    @Test
     fun aCaptionStaysWithItsPhoto() {
         val ui = MessageFormat.toUi(message(text = "look", attachments = listOf(AttachmentInfo("A1", "image/png"))), ctx(), time)!!
         assertEquals("look", ui.text)
@@ -180,6 +197,18 @@ class MessageFormatTest {
         val left = message(text = "", mine = true, itemType = 3, groupAction = 0)
         assertEquals("You left the conversation", MessageFormat.toUi(left, ctx(group = true), time)!!.text)
         assertNull(MessageFormat.toUi(message(text = "", itemType = 99), ctx(group = true), time))
+    }
+
+    @Test
+    fun onlyTheKnownPhotoCodesSayThePhotoChanged() {
+        val changed = message(text = "", itemType = 3, groupAction = 1)
+        assertEquals("Chris changed the group photo", MessageFormat.toUi(changed, ctx(group = true), time)!!.text)
+        val removed = message(text = "", itemType = 3, groupAction = 2)
+        assertEquals("Chris removed the group photo", MessageFormat.toUi(removed, ctx(group = true), time)!!.text)
+        // The server reported bare type 3 rows with these codes right after a send, and no photo had changed.
+        for (code in listOf(3, 7)) {
+            assertNull(MessageFormat.toUi(message(text = "", itemType = 3, groupAction = code), ctx(group = true), time))
+        }
     }
 
     @Test

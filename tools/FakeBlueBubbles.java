@@ -89,6 +89,7 @@ public class FakeBlueBubbles {
         add(sam, "￼", 3, false, "+15550100002", false,
             ",\"attachments\":[{\"guid\":\"AUD-1\",\"mimeType\":\"audio/x-wav\",\"transferName\":\"Audio Message.wav\",\"width\":0,\"height\":0}]");
         add(jordan, "Can you send me the address?", 5, false, "+15550100003", true, "");
+        add(jordan, "Or call me on (608) 264-6591 when you can", 4, false, "+15550100003", true, "");
         add(stranger, "Your package has been delivered", 4000, false, "+15550100009", false, "");
 
         // A long thread for testing history paging: 230 rows, two minutes apart, row 0 the oldest and row 229 the newest.
@@ -232,10 +233,14 @@ public class FakeBlueBubbles {
             long after = num(body, "after", 0);
             int limit = Math.min((int) num(body, "limit", 100), sweepCap);
             int offset = (int) num(body, "offset", 0);
+            // A text search sends a where on message.text with the pattern in its args, like the real server's.
+            String needle = body.contains("LIKE") ? str(body, "text").replace("%", "").toLowerCase() : null;
+            if (needle != null) System.out.println("  text search for \"" + needle + "\"");
             StringBuilder out = new StringBuilder();
             int skipped = 0, taken = 0;
             for (Msg m : newestFirst) {
                 if (m.date <= after) continue;
+                if (needle != null && !m.text.toLowerCase().contains(needle)) continue;
                 if (skipped++ < offset) continue;
                 if (taken++ >= limit) break;
                 out.append(out.length() > 0 ? "," : "").append(msgJson(m, true));

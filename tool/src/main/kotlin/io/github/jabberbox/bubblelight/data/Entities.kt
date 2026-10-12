@@ -45,6 +45,9 @@ object MessageState {
     const val OK = 0
     const val SENDING = 2
     const val FAILED = 3
+
+    /** Could not reach the server at all, so it goes out by itself when the connection returns. */
+    const val QUEUED = 4
 }
 
 @Serializable

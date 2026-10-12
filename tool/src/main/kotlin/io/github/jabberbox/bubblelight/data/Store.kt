@@ -60,6 +60,30 @@ class Store(private val dataStore: DataStore<Preferences>, private val scope: Co
     /** The chats pinned to the top of the list, by room guid. Pinning a conversation pins every room it is made of. */
     val pinned: StateFlow<Set<String>> = _pinned.asStateFlow()
 
+    private val _archived = MutableStateFlow<Map<String, Long>>(emptyMap())
+
+    /**
+     * Archived chats, by room guid, each with the date of its newest message when it was archived. A chat stays out of
+     * the way until something newer than that arrives, which brings it back by itself.
+     */
+    val archived: StateFlow<Map<String, Long>> = _archived.asStateFlow()
+
+    /** Unsent text per chat, by the room guid new messages go to. */
+    private val drafts = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+    /** The draft saved for [guid], or an empty string. */
+    fun draft(guid: String): String = drafts[guid].orEmpty()
+
+    /** Saves the unsent text of a chat. Blank text removes the draft. */
+    fun setDraft(guid: String, text: String) {
+        val key = draftKey(guid)
+        if (text.isBlank()) {
+            if (drafts.remove(guid) != null) persist { it.remove(key) }
+        } else if (drafts.put(guid, text) != text) {
+            persist { it[key] = text }
+        }
+    }
+
     val password: String?
         get() = encryptedPassword?.let { runCatching { SecureStore.decrypt(it) }.getOrNull() }
 
@@ -76,6 +100,25 @@ class Store(private val dataStore: DataStore<Preferences>, private val scope: Co
         serverAccount = prefs[KEY_ACCOUNT]
         chatListImported = prefs[KEY_CHAT_LIST_IMPORTED] ?: false
         _pinned.value = prefs[KEY_PINNED] ?: emptySet()
+        _archived.value = (prefs[KEY_ARCHIVED] ?: emptySet()).mapNotNull(::parseArchived).toMap()
+        drafts.clear()
+        for ((key, value) in prefs.asMap()) {
+            if (key.name.startsWith(DRAFT_PREFIX) && value is String) drafts[key.name.removePrefix(DRAFT_PREFIX)] = value
+        }
+    }
+
+    /** Archives every room in [guids], remembering [lastDate], the newest message at this moment. */
+    fun setArchived(guids: Collection<String>, lastDate: Long) {
+        val next = _archived.value + guids.associateWith { lastDate }
+        _archived.value = next
+        persist { it[KEY_ARCHIVED] = next.map { (guid, date) -> "$guid$ARCHIVE_SEPARATOR$date" }.toSet() }
+    }
+
+    /** Brings back every room in [guids]. */
+    fun unarchive(guids: Collection<String>) {
+        val next = _archived.value - guids.toSet()
+        _archived.value = next
+        persist { if (next.isEmpty()) it.remove(KEY_ARCHIVED) else it[KEY_ARCHIVED] = next.map { (guid, date) -> "$guid$ARCHIVE_SEPARATOR$date" }.toSet() }
     }
 
     /** Pins or unpins every room in [guids]. */
@@ -85,10 +128,17 @@ class Store(private val dataStore: DataStore<Preferences>, private val scope: Co
         persist { if (next.isEmpty()) it.remove(KEY_PINNED) else it[KEY_PINNED] = next }
     }
 
-    /** Forgets every pin, for when the chats they pointed at are gone. */
-    fun clearPins() {
+    /** Forgets every pin, archive and draft, for when the chats they pointed at are gone. */
+    fun clearChatMarks() {
         _pinned.value = emptySet()
-        persist { it.remove(KEY_PINNED) }
+        _archived.value = emptyMap()
+        val drafted = drafts.keys.toList()
+        drafts.clear()
+        persist { prefs ->
+            prefs.remove(KEY_PINNED)
+            prefs.remove(KEY_ARCHIVED)
+            drafted.forEach { prefs.remove(draftKey(it)) }
+        }
     }
 
     fun saveServer(url: String, password: String) {
@@ -154,9 +204,14 @@ class Store(private val dataStore: DataStore<Preferences>, private val scope: Co
         serverAccount = null
         chatListImported = false
         _pinned.value = emptySet()
+        _archived.value = emptyMap()
+        val drafted = drafts.keys.toList()
+        drafts.clear()
         // The SDK keeps its own keys in this same DataStore, so only this tool's keys are removed.
         dataStore.edit { prefs ->
             prefs.remove(KEY_PINNED)
+            prefs.remove(KEY_ARCHIVED)
+            drafted.forEach { prefs.remove(draftKey(it)) }
             listOf(KEY_URL, KEY_PASSWORD, KEY_ACCOUNT).forEach { prefs.remove(it) }
             listOf(KEY_LAST_SEEN, KEY_CONTACTS_SYNC).forEach { prefs.remove(it) }
             listOf(KEY_PRIVATE_API, KEY_READ_RECEIPTS, KEY_CHAT_LIST_IMPORTED).forEach { prefs.remove(it) }
@@ -177,6 +232,17 @@ class Store(private val dataStore: DataStore<Preferences>, private val scope: Co
         private val KEY_ACCOUNT = stringPreferencesKey("bb_server_account")
         private val KEY_CHAT_LIST_IMPORTED = booleanPreferencesKey("bb_chat_list_imported")
         private val KEY_PINNED = stringSetPreferencesKey("bb_pinned_chats")
+        private val KEY_ARCHIVED = stringSetPreferencesKey("bb_archived_chats")
+        private const val DRAFT_PREFIX = "bb_draft_"
+        private const val ARCHIVE_SEPARATOR = '\u0001'
+
+        private fun draftKey(guid: String) = stringPreferencesKey(DRAFT_PREFIX + guid)
+
+        private fun parseArchived(entry: String): Pair<String, Long>? {
+            val guid = entry.substringBefore(ARCHIVE_SEPARATOR)
+            val date = entry.substringAfter(ARCHIVE_SEPARATOR, "").toLongOrNull() ?: return null
+            return if (guid.isEmpty()) null else guid to date
+        }
 
         /**
          * Turns what was typed or scanned into a server URL, with no trailing slash. A scheme that was given is kept.

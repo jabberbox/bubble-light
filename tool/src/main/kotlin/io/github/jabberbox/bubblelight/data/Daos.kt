@@ -59,6 +59,10 @@ interface ChatDao {
 
     @Query("UPDATE chats SET historyExhausted = :exhausted WHERE guid = :guid")
     suspend fun setExhausted(guid: String, exhausted: Boolean)
+
+    /** The date of the newest real message in any chat, which says how recently the server has delivered anything. */
+    @Query("SELECT MAX(lastRealDate) FROM chats")
+    fun observeNewestReal(): Flow<Long?>
 }
 
 @Dao
@@ -99,6 +103,20 @@ interface MessageDao {
     /** Messages still marked sending from an earlier run can never complete, so they become failed. */
     @Query("UPDATE messages SET state = 3 WHERE state = 2")
     suspend fun failStaleSending()
+
+    /** Messages waiting for a connection, oldest first, so they go out in the order they were written. */
+    @Query("SELECT * FROM messages WHERE state = 4 ORDER BY dateCreated ASC")
+    suspend fun queued(): List<MessageEntity>
+
+    /**
+     * Messages whose text contains [needle], newest first, without tapbacks and group events. A `%` or `_` typed in
+     * the search matches more than itself, which only ever widens the result.
+     */
+    @Query(
+        "SELECT * FROM messages WHERE reaction IS NULL AND itemType = 0 AND state = 0 AND text LIKE '%' || :needle || '%' " +
+            "ORDER BY dateCreated DESC LIMIT :limit",
+    )
+    suspend fun search(needle: String, limit: Int): List<MessageEntity>
 }
 
 @Dao

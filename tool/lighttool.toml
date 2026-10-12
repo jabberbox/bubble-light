@@ -1,8 +1,8 @@
 [tool]
 id = "io.github.jabberbox.bubblelight"
 label = "Bubble Light"
-versionCode = 8
-versionName = "1.4.0"
+versionCode = 9
+versionName = "1.5.0"
 # The camera is used only to scan the server's setup QR code, and the microphone only to record a voice message.
 permissions = ["android.permission.INTERNET", "android.permission.CAMERA", "android.permission.RECORD_AUDIO"]
 # Self-hosted BlueBubbles servers are often plain http on the home network.
