@@ -33,17 +33,19 @@ class TextEntryScreen(
         val state = rememberTextFieldState("")
         val keyboardOptions = rememberKeyboardOptions()
         BubbleTheme {
-            LightTextInputEditor(
-                title = title,
-                state = state,
-                onSubmit = { text -> text.toString().takeIf { it.isNotBlank() }?.let { goBack(it) } },
-                onBack = { goBack() },
-                keyboardOptionsFlow = keyboardOptions,
-                submitLabel = submitLabel,
-                submitIcon = submitIcon,
-                singleLine = true,
-                modifier = Modifier.fillMaxSize(),
-            )
+            AtKeyboardDensity {
+                LightTextInputEditor(
+                    title = title,
+                    state = state,
+                    onSubmit = { text -> text.toString().takeIf { it.isNotBlank() }?.let { goBack(it) } },
+                    onBack = { goBack() },
+                    keyboardOptionsFlow = keyboardOptions,
+                    submitLabel = submitLabel,
+                    submitIcon = submitIcon,
+                    singleLine = true,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
         }
     }
 }
@@ -74,26 +76,28 @@ class ComposeScreen(
             }
         }
         BubbleTheme {
-            LightTextInputEditor(
-                title = title,
-                state = state,
-                onSubmit = { text ->
-                    text.toString().takeIf { it.isNotBlank() }?.let {
-                        sent.set(true)
-                        draftKey?.let { key -> graph.store.setDraft(key, "") }
-                        goBack(it)
-                    }
-                },
-                onBack = {
-                    draftKey?.let { key -> graph.store.setDraft(key, state.text.toString()) }
-                    goBack()
-                },
-                keyboardOptionsFlow = keyboardOptions,
-                submitLabel = "SEND",
-                submitIcon = LightIcons.SEND,
-                initialCaps = true,
-                modifier = Modifier.fillMaxSize(),
-            )
+            AtKeyboardDensity {
+                LightTextInputEditor(
+                    title = title,
+                    state = state,
+                    onSubmit = { text ->
+                        text.toString().takeIf { it.isNotBlank() }?.let {
+                            sent.set(true)
+                            draftKey?.let { key -> graph.store.setDraft(key, "") }
+                            goBack(it)
+                        }
+                    },
+                    onBack = {
+                        draftKey?.let { key -> graph.store.setDraft(key, state.text.toString()) }
+                        goBack()
+                    },
+                    keyboardOptionsFlow = keyboardOptions,
+                    submitLabel = "SEND",
+                    submitIcon = LightIcons.SEND,
+                    initialCaps = true,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
         }
     }
 }

@@ -93,6 +93,7 @@ cached on the phone are cleared and downloaded again from the new server.
   an unnamed group titled by its members' initials, for example "PA, JT". The sizes were measured from a real
   Light Phone III.
 - Writing and sending messages, starting new conversations by name, number or email.
+- The keyboard is Light's own, drawn at the size the stock tools use. The SDK's copy is drawn in fixed dp and comes out about 15% small on a Light Phone III, so the editors scale it to the width of the screen.
 - Voice messages: the plus button opens a half-screen sheet, as in the stock app, with **Audio message**. Record,
   listen back, then send or throw it away. With the server's Private API on, it arrives as an iMessage voice
   message; without it, as an ordinary audio file. A failed one can be sent again by tapping it.
